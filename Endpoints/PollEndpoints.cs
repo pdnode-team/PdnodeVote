@@ -13,6 +13,11 @@ public static class PollEndpoints
     {
         var group = routes.MapGroup("/api/polls");
 
+        // Minimal APIs get no antiforgery validation from UseAntiforgery() alone (verified with a
+        // probe: an untokened JSON POST was still accepted), so state-changing endpoints opt in
+        // explicitly. Safe methods pass straight through the filter.
+        group.AddEndpointFilter<AntiforgeryEndpointFilter>();
+
         // GET /api/polls
         group.MapGet("/", async (
             PollService pollService,
@@ -59,11 +64,19 @@ public static class PollEndpoints
         });
 
         // GET /api/polls/{id}/qrcode
-        group.MapGet("/{id:int}/qrcode", (int id, HttpContext context) =>
+        group.MapGet("/{id:int}/qrcode", async (
+            int id,
+            PollService pollService,
+            IConfiguration configuration,
+            HttpContext context) =>
         {
-            var scheme = context.Request.Scheme;
-            var host = context.Request.Host;
-            var pollUrl = $"{scheme}://{host}/poll/{id}";
+            // A QR code for content that does not exist (or that the caller may not see) is useless and
+            // was previously minted for any id, so validate first.
+            var userId = context.User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            var poll = await pollService.GetPollDetailAsync(id, userId, GetClientIp(context));
+            if (poll == null) return Results.NotFound();
+
+            var pollUrl = BuildPublicPollUrl(configuration, context, id);
             var qr = Net.Codecrete.QrCodeGenerator.QrCode.EncodeText(pollUrl, Net.Codecrete.QrCodeGenerator.QrCode.Ecc.Medium);
             var svg = qr.ToSvgString(4);
             return Results.Content(svg, "image/svg+xml");
@@ -584,4 +597,27 @@ public static class PollEndpoints
     }
 
     private static string GetClientIp(HttpContext context) => ClientIpAccessor.GetClientIp(context);
+
+    /// <summary>
+    /// Builds the absolute public URL of a poll for use in generated QR codes.
+    /// </summary>
+    /// <remarks>
+    /// The client-supplied <c>Host</c> header is attacker controlled while <c>AllowedHosts</c> is "*"
+    /// (the default configuration), so reflecting it produced QR codes pointing at whatever origin the
+    /// caller asked for. An operator-configured <see cref="PdnodeVote.Data.SystemConstants.PublicBaseUrlConfigKey"/>
+    /// therefore wins; the request scheme/host is only a fallback for local/dev runs. Operations
+    /// deploying this app publicly should always set that value.
+    /// </remarks>
+    public static string BuildPublicPollUrl(IConfiguration configuration, HttpContext context, int pollId)
+    {
+        var configured = configuration[PdnodeVote.Data.SystemConstants.PublicBaseUrlConfigKey];
+        if (!string.IsNullOrWhiteSpace(configured)
+            && Uri.TryCreate(configured.Trim(), UriKind.Absolute, out var parsed)
+            && (parsed.Scheme == Uri.UriSchemeHttp || parsed.Scheme == Uri.UriSchemeHttps))
+        {
+            return $"{configured.Trim().TrimEnd('/')}/poll/{pollId}";
+        }
+
+        return $"{context.Request.Scheme}://{context.Request.Host}/poll/{pollId}";
+    }
 }

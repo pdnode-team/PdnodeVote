@@ -1,5 +1,6 @@
 @page "/user/{Username}"
 @rendermode InteractiveAuto
+@using System.Globalization
 @inject IPollApiClient PollApi
 @inject NavigationManager NavigationManager
 @inject ISnackbar Snackbar
@@ -65,7 +66,7 @@
                         </div>
 
                         <div class="d-flex align-center gap-3 mt-1" style="font-size: 13px; color: #94a3b8;">
-                            <span>Joined @_profile.JoinedAt.ToString("MMMM yyyy")</span>
+                            <span>Joined @FormatLocal(_profile.JoinedAt, "MMMM yyyy")</span>
                             <span>·</span>
                             <span>@_profile.CreatedPollsCount polls created</span>
                             <span>·</span>
@@ -113,7 +114,7 @@
                                             </span>
                                         }
                                         <span style="font-size: 11px; color: #64748b;">
-                                            @poll.CreatedAt.ToLocalTime().ToString("MMM dd, yyyy")
+                                            @FormatLocal(poll.CreatedAt, "MMM dd, yyyy")
                                         </span>
                                     </div>
                                     <span style="font-size: 11px; color: #64748b;">
@@ -167,7 +168,7 @@
                                         On poll: <strong style="color: #38bdf8;">@c.PollTitle</strong>
                                     </span>
                                     <span style="font-size: 11px; color: #64748b;">
-                                        @c.CreatedAt.ToLocalTime().ToString("MMM dd, yyyy HH:mm")
+                                        @FormatLocal(c.CreatedAt)
                                     </span>
                                 </div>
                                 <div style="font-size: 13px; color: #cbd5e1; line-height: 1.5; white-space: pre-wrap;">
@@ -188,6 +189,23 @@
 
     private UserProfileDto? _profile;
     private bool _isLoading = true;
+
+    /// <summary>
+    /// Formats an API timestamp in the viewer's local timezone (see PollDetail.razor for the full
+    /// explanation: the API sends Unspecified-kind UTC, so ToLocalTime() on its own does nothing).
+    /// </summary>
+    private static string FormatLocal(DateTime utc) =>
+        FormatLocal(utc, "MMM dd, yyyy HH:mm");
+
+    private static string FormatLocal(DateTime utc, string format) =>
+        AsUtc(utc).ToLocalTime().ToString(format, CultureInfo.InvariantCulture);
+
+    private static DateTime AsUtc(DateTime value) => value.Kind switch
+    {
+        DateTimeKind.Utc => value,
+        DateTimeKind.Local => value.ToUniversalTime(),
+        _ => DateTime.SpecifyKind(value, DateTimeKind.Utc)
+    };
 
     protected override async Task OnParametersSetAsync()
     {

@@ -1,4 +1,6 @@
 using Microsoft.AspNetCore.Antiforgery;
+using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Components.Authorization;
 using Microsoft.AspNetCore.Components.Server;
 using Microsoft.AspNetCore.HttpOverrides;
@@ -52,15 +54,39 @@ builder.Services.ConfigureApplicationCookie(options =>
     options.Cookie.SecurePolicy = CookieSecurePolicy.SameAsRequest;
     options.SlidingExpiration = true;
     options.ExpireTimeSpan = TimeSpan.FromHours(12);
+
+    // API callers parse JSON and need to tell "not signed in" apart from "no such endpoint"; the
+    // cookie handler's default reaction to a challenge is a 302 to the login page with an HTML body,
+    // which ApiResponse.ReadAsync cannot interpret. Page requests keep that redirect so a browser
+    // with an expired session still lands on the login page.
+    options.Events = ApiAuthenticationResponses.CreateCookieEvents();
 });
 
-builder.Services.Configure<CircuitOptions>(options =>
-{
-    options.DisconnectedCircuitMaxRetained = 0;
-    options.DisconnectedCircuitRetentionPeriod = TimeSpan.Zero;
-});
+// Disconnected-circuit retention deliberately uses the framework defaults. The previous override
+// (DisconnectedCircuitMaxRetained = 0 + RetentionPeriod = Zero) is implemented by .NET 10 as
+// MemoryCacheOptions.SizeLimit = 0, which evicts a disconnected circuit immediately, so a Blazor
+// reconnect could never resume it. The policy lives in CircuitRetention so a regression test can
+// assert it without spinning up the host.
+builder.Services.Configure<CircuitOptions>(CircuitRetention.Configure);
 
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection") ?? throw new InvalidOperationException("Connection string 'DefaultConnection' not found.");
+
+// Resolve a relative SQLite path against the content root instead of the process working directory.
+// Microsoft.Data.Sqlite resolves DataSource against the CWD, so starting the app from a different
+// directory silently created (and seeded) a *different* database while the seeder prepared the folder
+// next to the content root. An absolute path removes that ambiguity; in-memory and fully-qualified
+// paths pass through untouched.
+{
+    var csb = new Microsoft.Data.Sqlite.SqliteConnectionStringBuilder(connectionString);
+    if (!string.IsNullOrWhiteSpace(csb.DataSource)
+        && csb.DataSource != ":memory:"
+        && !csb.DataSource.StartsWith("file:", StringComparison.OrdinalIgnoreCase)
+        && !Path.IsPathRooted(csb.DataSource))
+    {
+        csb.DataSource = Path.Combine(builder.Environment.ContentRootPath, csb.DataSource);
+        connectionString = csb.ToString();
+    }
+}
 
 // 注册 DbContextFactory 和 DbContext
 // PendingModelChangesWarning is downgraded on purpose: EF Core 9+ raises it even when the model
@@ -168,7 +194,16 @@ else
     app.UseExceptionHandler("/Error", createScopeForErrors: true);
     app.UseHsts();
 }
-// 仅对非静态资产与非框架请求重定向到 404 页面，避免破坏 WebAssembly 静态资源与 API 的状态码
+// Status-code pages are mounted conditionally, never globally: re-executing a failed /_framework,
+// /_content or /api response would rewrite the status codes and bodies that the WebAssembly client
+// and ApiResponse.ReadAsync depend on (including the JSON 401/403 challenges configured above).
+//
+// Note this branch is currently a no-op for unmatched page URLs - verified by running the app:
+// GET /definitely-not-a-page answers "404 Not Found" with an empty body, i.e. the re-execute never
+// fires because the Razor Components endpoint owns every non-file path. The original comment claimed
+// a 404-page redirect that does not happen. It is left in place (rather than deleted) because the
+// predicate is still the correct guard if status-code pages are ever made to work, and because
+// changing response behaviour here is riskier than documenting it.
 app.UseWhen(context => !context.Request.Path.StartsWithSegments("/_framework") 
                     && !context.Request.Path.StartsWithSegments("/_content")
                     && !context.Request.Path.StartsWithSegments("/api"), appBuilder =>
@@ -229,6 +264,10 @@ app.MapAdditionalIdentityEndpoints();
 app.MapPollEndpoints();
 app.MapAdminEndpoints();
 
+// Supplies the antiforgery request token that state-changing API endpoints require
+// (minimal APIs get no validation from UseAntiforgery() alone).
+app.MapAntiforgeryTokenEndpoint();
+
 // SignalR Real-Time Hub
 app.MapHub<PollHub>("/hubs/poll");
 
@@ -257,3 +296,59 @@ app.MapPost("/Account/Logout", async (HttpContext http, SignInManager<Applicatio
 });
 
 app.Run();
+
+/// <summary>
+/// Challenge / access-denied responses for cookie-authenticated requests.
+///
+/// Requests under /api are answered with a JSON body and the matching 401/403 status - the same shape
+/// RateLimiting/AppRateLimiting.cs uses for 429 - because the WASM client's ApiResponse.ReadAsync
+/// parses JSON and would otherwise receive an HTML login page for "not signed in" and "no such
+/// endpoint" alike. Every other request keeps the cookie handler's normal redirect to
+/// LoginPath/AccessDeniedPath so page navigation still reaches the login page.
+/// </summary>
+public static class ApiAuthenticationResponses
+{
+    public const string UnauthorizedMessage = "Authentication is required to access this resource.";
+    public const string ForbiddenMessage = "You do not have permission to access this resource.";
+
+    public static CookieAuthenticationEvents CreateCookieEvents() => new()
+    {
+        OnRedirectToLogin = context => HandleAsync(context, StatusCodes.Status401Unauthorized, UnauthorizedMessage),
+        OnRedirectToAccessDenied = context => HandleAsync(context, StatusCodes.Status403Forbidden, ForbiddenMessage)
+    };
+
+    public static bool IsApiRequest(HttpContext httpContext) =>
+        httpContext.Request.Path.StartsWithSegments("/api", StringComparison.OrdinalIgnoreCase);
+
+    public static Task HandleAsync(RedirectContext<CookieAuthenticationOptions> context, int statusCode, string message)
+    {
+        if (!IsApiRequest(context.HttpContext))
+        {
+            context.Response.Redirect(context.RedirectUri);
+            return Task.CompletedTask;
+        }
+
+        context.Response.StatusCode = statusCode;
+        // WriteAsJsonAsync sets ContentType, so the status-code-pages middleware (mounted for non-/api
+        // paths only) never re-executes this response.
+        return context.Response.WriteAsJsonAsync(
+            new PdnodeVote.Client.Models.ServiceResult { Success = false, Message = message });
+    }
+}
+
+/// <summary>
+/// Blazor Server's disconnected-circuit retention policy.
+///
+/// A disconnected circuit is what a browser tab leaves behind while the SignalR connection is being
+/// re-established; .NET 10 stores those circuits in a memory cache whose SizeLimit is derived from
+/// <see cref="CircuitOptions.DisconnectedCircuitMaxRetained"/>. Setting it to 0 therefore makes an
+/// immediate eviction and turns every transient network drop into a lost session.
+/// </summary>
+public static class CircuitRetention
+{
+    public static void Configure(CircuitOptions options)
+    {
+        options.DisconnectedCircuitMaxRetained = 100;
+        options.DisconnectedCircuitRetentionPeriod = TimeSpan.FromMinutes(3);
+    }
+}

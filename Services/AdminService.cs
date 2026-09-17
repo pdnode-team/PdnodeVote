@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using PdnodeVote.Data;
 
 namespace PdnodeVote.Services;
@@ -11,17 +12,22 @@ public class AdminService : IAdminService
     private readonly UserManager<ApplicationUser> _userManager;
     private readonly RoleManager<IdentityRole> _roleManager;
     private readonly IEmailNotificationService _emailNotificationService;
+    private readonly IConfiguration? _configuration;
 
     public AdminService(
         IDbContextFactory<ApplicationDbContext> dbContextFactory,
         UserManager<ApplicationUser> userManager,
         RoleManager<IdentityRole> roleManager,
-        IEmailNotificationService emailNotificationService)
+        IEmailNotificationService emailNotificationService,
+        IConfiguration? configuration = null)
     {
         _dbContextFactory = dbContextFactory;
         _userManager = userManager;
         _roleManager = roleManager;
         _emailNotificationService = emailNotificationService;
+        // Optional so the existing test harness (and any manual construction) keeps compiling; the DI
+        // container always supplies the app configuration.
+        _configuration = configuration;
     }
 
     public async Task<AdminDashboardStatsDto> GetStatsAsync()
@@ -76,9 +82,13 @@ public class AdminService : IAdminService
 
         var result = new List<AdminUserDto>();
 
+        // One joined query for all role assignments instead of a UserManager.GetRolesAsync round-trip
+        // per user (the previous loop issued an N+1 query storm against AspNetUserRoles/AspNetRoles).
+        var rolesByUser = await GetRolesByUserAsync(context, users.Select(u => u.Id).ToList());
+
         foreach (var user in users)
         {
-            var roles = (await _userManager.GetRolesAsync(user)).ToList();
+            var roles = rolesByUser.TryGetValue(user.Id, out var assignedRoles) ? assignedRoles : new List<string>();
             if (user.IsRootAdmin && !roles.Contains("Admin"))
             {
                 roles.Add("Admin");
@@ -171,9 +181,13 @@ public class AdminService : IAdminService
             .ToDictionaryAsync(x => x.CreatorId, x => (x.TotalCount, x.ApprovedCount));
 
         var dtos = new List<AdminUserDto>();
+
+        // Same batched role load as GetUsersAsync (one join, not one query per user).
+        var rolesByUser = await GetRolesByUserAsync(context, userIds);
+
         foreach (var user in users)
         {
-            var roles = (await _userManager.GetRolesAsync(user)).ToList();
+            var roles = rolesByUser.TryGetValue(user.Id, out var assignedRoles) ? assignedRoles : new List<string>();
             if (user.IsRootAdmin && !roles.Contains("Admin"))
             {
                 roles.Add("Admin");
@@ -203,6 +217,31 @@ public class AdminService : IAdminService
             Page = page,
             PageSize = pageSize
         };
+    }
+
+    /// <summary>
+    /// Loads the role names of every requested user in a single join over AspNetUserRoles/AspNetRoles.
+    /// The per-user UserManager.GetRolesAsync loop it replaces was the N+1 hot spot in P3.
+    /// </summary>
+    private static async Task<Dictionary<string, List<string>>> GetRolesByUserAsync(
+        ApplicationDbContext context, IReadOnlyCollection<string> userIds)
+    {
+        if (userIds.Count == 0)
+        {
+            return new Dictionary<string, List<string>>();
+        }
+
+        var rows = await (from userRole in context.UserRoles
+                          join role in context.Roles on userRole.RoleId equals role.Id
+                          where userIds.Contains(userRole.UserId) && role.Name != null
+                          select new { userRole.UserId, RoleName = role.Name! })
+                         .ToListAsync();
+
+        // Ordered for a stable payload regardless of the database's row order.
+        return rows.GroupBy(r => r.UserId)
+                   .ToDictionary(
+                       g => g.Key,
+                       g => g.Select(r => r.RoleName).OrderBy(name => name, StringComparer.Ordinal).ToList());
     }
 
     public async Task<(int SuccessCount, string Message)> BanUsersAsync(IEnumerable<string> userIds, bool isPermanent, int durationDays, string reason, string? currentAdminUserId = null)
@@ -325,25 +364,44 @@ public class AdminService : IAdminService
         var baseStr = Convert.ToHexString(randomBytes);
         var newPassword = $"Pd#{baseStr}!9";
 
-        if (await _userManager.HasPasswordAsync(user))
-        {
-            await _userManager.RemovePasswordAsync(user);
-        }
-        var result = await _userManager.AddPasswordAsync(user, newPassword);
+        // Replace the password through Identity's reset-token flow instead of
+        // RemovePasswordAsync + AddPasswordAsync. That pair was not atomic: the removal was persisted
+        // first, so when AddPasswordAsync failed the account was left with NO password and the old
+        // hash was already gone. ResetPasswordAsync validates the password policy and writes the new
+        // hash in a single SaveChangesAsync (it also rotates the security stamp), so the row always
+        // keeps exactly one usable password - either the new one or the previous one.
+        var resetToken = await _userManager.GeneratePasswordResetTokenAsync(user);
+        var result = await _userManager.ResetPasswordAsync(user, resetToken, newPassword);
 
         if (!result.Succeeded)
         {
+            // Nothing was persisted: the account still authenticates with its previous password.
             var errors = string.Join("; ", result.Errors.Select(e => e.Description));
             return (false, $"Password reset failed: {errors}", null);
         }
 
-        if (!string.IsNullOrEmpty(user.Email))
+        // The new password is deliberately kept out of the returned Message: that message is
+        // serialized back to the caller over HTTP, and the tuple's NewPassword is only routed to the
+        // email notification below.
+        if (string.IsNullOrEmpty(user.Email))
         {
-            await _emailNotificationService.NotifyPasswordResetAsync(user.Email, newPassword);
+            return (true, "A new password was generated, but this account has no email address on file. Pass it to the user through another (secure) channel.", newPassword);
+        }
+
+        await _emailNotificationService.NotifyPasswordResetAsync(user.Email, newPassword);
+
+        if (!IsSmtpConfigured())
+        {
+            // Reporting "emailed" here would be a lie: EmailNotificationService silently drops the
+            // message when SmtpSettings:Host is empty (M10).
+            return (true, $"A new password was generated, but email delivery is not configured, so it was NOT sent to {user.Email}. Pass it to the user through another (secure) channel.", newPassword);
         }
 
         return (true, $"Password reset successfully! Temporary credentials emailed to {user.Email}.", newPassword);
     }
+
+    private bool IsSmtpConfigured() =>
+        !string.IsNullOrWhiteSpace(_configuration?["SmtpSettings:Host"]);
 
     public async Task<(int SentCount, string Message)> SendBulkEmailToUsersAsync(IEnumerable<string> userIds, string subject, string message)
     {

@@ -10,13 +10,22 @@ builder.Services.AddAuthenticationStateDeserialization();
 
 builder.Services.AddMudServices();
 
+// Antiforgery is opted into server-side by the state-changing API endpoints (minimal APIs get no
+// validation from UseAntiforgery() alone). This client half fetches the token and attaches it.
+builder.Services.AddScoped<IAntiforgeryTokenProvider>(sp =>
+    new AntiforgeryTokenProvider(sp.GetRequiredService<HttpClient>()));
+
 builder.Services.AddScoped(sp =>
 {
-    var handler = new CookieHandler
+    var cookieHandler = new CookieHandler
     {
         InnerHandler = new HttpClientHandler()
     };
-    return new HttpClient(handler)
+    var antiforgeryHandler = new AntiforgeryHeaderHandler(sp.GetRequiredService<IAntiforgeryTokenProvider>())
+    {
+        InnerHandler = cookieHandler
+    };
+    return new HttpClient(antiforgeryHandler)
     {
         BaseAddress = new Uri(builder.HostEnvironment.BaseAddress)
     };

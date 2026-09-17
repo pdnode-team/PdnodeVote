@@ -14,6 +14,10 @@ public static class AdminEndpoints
         var group = routes.MapGroup("/api/admin")
             .RequireAuthorization(policy => policy.RequireRole("Admin", "Moderator", "SuperModerator"));
 
+        // Minimal APIs get no antiforgery validation from UseAntiforgery() alone, so state-changing
+        // admin endpoints opt in explicitly (safe methods pass through the filter untouched).
+        group.AddEndpointFilter<AntiforgeryEndpointFilter>();
+
         // GET /api/admin/stats
         group.MapGet("/stats", async (IAdminService adminService) =>
         {
@@ -104,26 +108,43 @@ public static class AdminEndpoints
         }).RequireAuthorization(policy => policy.RequireRole("Admin"));
 
         // GET /api/admin/users
+        //
+        // NOTE on the paging shape: this endpoint returns the *filtered* user list and the admin
+        // dashboard relies on that — it pulls the list once and then filters by role / banned state on
+        // the client, so silently truncating to a page would break those filters. `pageSize` therefore
+        // acts as an upper bound (previously it was accepted and then ignored entirely), and the
+        // in-memory slice makes `page` mean what its name says for anyone who passes a higher page.
+        // A genuinely paged endpoint already exists at /api/admin/users/paged.
         group.MapGet("/users", async (
             IAdminService adminService,
             [FromQuery] int page = 1,
             [FromQuery] int pageSize = 50,
             [FromQuery] string? search = null) =>
         {
+            const int maxUsersPerRequest = 500;
+
+            if (page < 1) page = 1;
+            if (pageSize < 1) pageSize = 50;
+            if (pageSize > maxUsersPerRequest) pageSize = maxUsersPerRequest;
+
             var users = await adminService.GetUsersAsync(search);
-            var dtos = users.Select(u => new PdnodeVote.Client.Models.AdminUserDto
-            {
-                Id = u.Id,
-                UserName = u.UserName,
-                Email = u.Email,
-                CreatedAt = u.CreatedAt,
-                IsBanned = u.IsBanned,
-                BannedUntil = u.BannedUntil,
-                BanReason = u.BanReason,
-                Roles = u.Roles,
-                ApprovedPollsCount = u.ApprovedPollsCount,
-                TotalPollsCount = u.TotalPollsCount
-            }).ToList();
+            var dtos = users
+                .Skip((page - 1) * pageSize)
+                .Take(pageSize)
+                .Select(u => new PdnodeVote.Client.Models.AdminUserDto
+                {
+                    Id = u.Id,
+                    UserName = u.UserName,
+                    Email = u.Email,
+                    CreatedAt = u.CreatedAt,
+                    IsBanned = u.IsBanned,
+                    BannedUntil = u.BannedUntil,
+                    BanReason = u.BanReason,
+                    Roles = u.Roles,
+                    ApprovedPollsCount = u.ApprovedPollsCount,
+                    TotalPollsCount = u.TotalPollsCount
+                })
+                .ToList();
 
             return Results.Ok(dtos);
         }).RequireAuthorization(policy => policy.RequireRole("Admin"));

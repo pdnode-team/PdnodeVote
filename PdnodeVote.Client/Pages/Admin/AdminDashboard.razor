@@ -139,7 +139,7 @@ else
                                         <span>·</span>
                                         <span>Past Approved: <b style="color: #94a3b8;">@p.CreatorApprovedPollsCount</b></span>
                                         <span>·</span>
-                                        <span>@p.CreatedAt.ToLocalTime().ToString("MMM dd, HH:mm")</span>
+                                        <span>@FormatLocal(p.CreatedAt, "MMM dd, HH:mm")</span>
                                     </div>
                                     @if (!string.IsNullOrWhiteSpace(p.Description))
                                     {
@@ -266,7 +266,7 @@ else
                                     }
                                 </MudTd>
                                 <MudTd DataLabel="Votes">@context.ParticipantCount</MudTd>
-                                <MudTd DataLabel="Created">@context.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd")</MudTd>
+                                <MudTd DataLabel="Created">@FormatLocal(context.CreatedAt, "yyyy-MM-dd")</MudTd>
                                 <MudTd Style="text-align: right;">
                                     <div class="d-flex justify-end gap-1">
                                         <MudTooltip Text="@(context.IsPinned ? "Unpin" : "Pin to Top")">
@@ -424,7 +424,7 @@ else
                                         <MudChip T="string" Color="Color.Success" Size="Size.Small" Variant="Variant.Text">Active</MudChip>
                                     }
                                 </MudTd>
-                                <MudTd DataLabel="Registered">@context.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd")</MudTd>
+                                <MudTd DataLabel="Registered">@FormatLocal(context.CreatedAt, "yyyy-MM-dd")</MudTd>
                                 <MudTd DataLabel="Polls">@context.ApprovedPollsCount / @context.TotalPollsCount</MudTd>
                                 <MudTd Style="text-align: right;">
                                     <div class="d-flex justify-end gap-1">
@@ -549,7 +549,7 @@ else
                                         @context.ApprovalsCount / 2 votes
                                     </MudChip>
                                 </MudTd>
-                                <MudTd DataLabel="Submitted At">@context.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</MudTd>
+                                <MudTd DataLabel="Submitted At">@FormatLocal(context.CreatedAt, "yyyy-MM-dd HH:mm")</MudTd>
                                 <MudTd Style="text-align: right;">
                                     <div class="d-flex justify-end gap-1">
                                         @if (context.HasReviewedByCurrentUser)
@@ -634,7 +634,7 @@ else
                                         @context.Content
                                     </div>
                                 </MudTd>
-                                <MudTd DataLabel="Submitted At">@context.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</MudTd>
+                                <MudTd DataLabel="Submitted At">@FormatLocal(context.CreatedAt, "yyyy-MM-dd HH:mm")</MudTd>
                                 <MudTd Style="text-align: right;">
                                     <div class="d-flex justify-end gap-1">
                                         <MudButton Variant="Variant.Filled"
@@ -700,7 +700,7 @@ else
                                             </span>
                                         </div>
                                         <div style="font-size: 11px; color: #64748b;">
-                                            Reported by <strong style="color: #94a3b8;">@report.ReporterName</strong> · @report.CreatedAt.ToLocalTime().ToString("MMM dd, HH:mm")
+                                            Reported by <strong style="color: #94a3b8;">@report.ReporterName</strong> · @FormatLocal(report.CreatedAt, "MMM dd, HH:mm")
                                         </div>
                                     </div>
 
@@ -1716,5 +1716,25 @@ else
         {
             _isSubmittingAction = false;
         }
+    }
+
+    /// <summary>
+    /// Formats a server timestamp in the viewer's local time.
+    /// </summary>
+    /// <remarks>
+    /// The API serializes UTC without a zone marker, so values arrive with
+    /// <see cref="DateTimeKind.Unspecified"/> and calling <c>ToLocalTime()</c> directly is a no-op —
+    /// every user outside UTC saw UTC. Normalizing the Kind first is what makes the conversion work.
+    /// </remarks>
+    private static string FormatLocal(DateTime value, string format)
+    {
+        var utc = value.Kind switch
+        {
+            DateTimeKind.Utc => value,
+            DateTimeKind.Local => value.ToUniversalTime(),
+            _ => DateTime.SpecifyKind(value, DateTimeKind.Utc)
+        };
+
+        return utc.ToLocalTime().ToString(format, System.Globalization.CultureInfo.InvariantCulture);
     }
 }

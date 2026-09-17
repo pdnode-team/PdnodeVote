@@ -1,4 +1,3 @@
-using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using PdnodeVote.Client.Models;
@@ -9,6 +8,9 @@ namespace PdnodeVote.Services;
 
 public class CommentService : ICommentService
 {
+    /// <summary>Maximum stored comment length.</summary>
+    public const int MaxCommentLength = 1000;
+
     private readonly IDbContextFactory<ApplicationDbContext> _dbContextFactory;
     private readonly UserManager<ApplicationUser> _userManager;
     private readonly IPollEventNotifier? _pollEventNotifier;
@@ -76,7 +78,9 @@ public class CommentService : ICommentService
             (c.Status == PollStatus.Removed && comments.Any(r => r.ParentCommentId == c.Id))
         ).ToList();
 
-        // Get user role badges and user levels efficiently
+        // Role badges and user levels are resolved in bulk for every commenter instead of ~7 queries
+        // per commenter (FindByIdAsync + 3x IsInRoleAsync + 3x CountAsync), which made the comment
+        // page an N+1 avalanche.
         var userIds = visibleComments.Select(c => c.UserId).Distinct().ToList();
         var roleBadgeMap = new Dictionary<string, string>();
         var userLevelMap = new Dictionary<string, int>();
@@ -84,35 +88,78 @@ public class CommentService : ICommentService
         var userLikedCommentIds = new HashSet<int>();
         if (!string.IsNullOrEmpty(currentUserId))
         {
+            var visibleCommentIds = visibleComments.Select(c => c.Id).ToList();
             var liked = await context.CommentLikes
-                .Where(cl => cl.UserId == currentUserId && visibleComments.Select(c => c.Id).Contains(cl.CommentId))
+                .Where(cl => cl.UserId == currentUserId && visibleCommentIds.Contains(cl.CommentId))
                 .Select(cl => cl.CommentId)
                 .ToListAsync();
             userLikedCommentIds = liked.ToHashSet();
         }
 
-        foreach (var uid in userIds)
+        if (userIds.Count > 0)
         {
-            var u = await _userManager.FindByIdAsync(uid);
-            if (u != null)
+            var usersById = await context.Users.AsNoTracking()
+                .Where(u => userIds.Contains(u.Id))
+                .Select(u => new { u.Id, u.CreatedAt })
+                .ToDictionaryAsync(u => u.Id, u => u.CreatedAt);
+
+            // Roles: one AspNetUserRoles join AspNetRoles query, then grouped in memory.
+            var roleNames = await (from ur in context.UserRoles
+                                   join r in context.Roles on ur.RoleId equals r.Id
+                                   where userIds.Contains(ur.UserId)
+                                   select new { ur.UserId, r.Name })
+                                  .AsNoTracking()
+                                  .ToListAsync();
+
+            var rolesByUser = roleNames
+                .Where(x => x.Name != null)
+                .GroupBy(x => x.UserId)
+                .ToDictionary(g => g.Key, g => g.Select(x => x.Name!).ToHashSet(StringComparer.OrdinalIgnoreCase));
+
+            // Counts: one grouped aggregate per metric instead of a CountAsync per user.
+            var voteCounts = await context.VoteRecords.AsNoTracking()
+                .Where(v => v.UserId != null && userIds.Contains(v.UserId))
+                .GroupBy(v => v.UserId!)
+                .Select(g => new { UserId = g.Key, Count = g.Count() })
+                .ToDictionaryAsync(x => x.UserId, x => x.Count);
+
+            var approvedPollCounts = await context.Polls.AsNoTracking()
+                .Where(p => userIds.Contains(p.CreatorId) && p.Status == PollStatus.Approved)
+                .GroupBy(p => p.CreatorId)
+                .Select(g => new { UserId = g.Key, Count = g.Count() })
+                .ToDictionaryAsync(x => x.UserId, x => x.Count);
+
+            var votesReceivedCounts = await context.VoteRecords.AsNoTracking()
+                .Where(v => v.Poll != null && userIds.Contains(v.Poll.CreatorId))
+                .GroupBy(v => v.Poll!.CreatorId)
+                .Select(g => new { UserId = g.Key, Count = g.Count() })
+                .ToDictionaryAsync(x => x.UserId, x => x.Count);
+
+            foreach (var uid in userIds)
             {
-                if (await _userManager.IsInRoleAsync(u, "Admin") || u.IsRootAdmin)
+                // A comment whose author row is gone keeps the default level (1) and no badge,
+                // exactly as the previous per-user FindByIdAsync loop behaved.
+                if (!usersById.TryGetValue(uid, out var createdAt)) continue;
+
+                var roles = rolesByUser.GetValueOrDefault(uid);
+                if ((roles != null && roles.Contains("Admin")) || PdnodeVote.Data.SystemConstants.IsRootAdmin(uid))
                 {
                     roleBadgeMap[uid] = "Admin";
                 }
-                else if (await _userManager.IsInRoleAsync(u, "SuperModerator"))
+                else if (roles != null && roles.Contains("SuperModerator"))
                 {
                     roleBadgeMap[uid] = "SuperModerator";
                 }
-                else if (await _userManager.IsInRoleAsync(u, "Moderator"))
+                else if (roles != null && roles.Contains("Moderator"))
                 {
                     roleBadgeMap[uid] = "Moderator";
                 }
 
-                var voteCount = await context.VoteRecords.CountAsync(v => v.UserId == uid);
-                var approvedPolls = await context.Polls.CountAsync(p => p.CreatorId == uid && p.Status == PollStatus.Approved);
-                var votesReceived = await context.VoteRecords.CountAsync(v => v.Poll != null && v.Poll.CreatorId == uid);
-                userLevelMap[uid] = UserLevelHelper.CalculateLevel(u.CreatedAt, voteCount, approvedPolls, votesReceived);
+                userLevelMap[uid] = UserLevelHelper.CalculateLevel(
+                    createdAt,
+                    voteCounts.GetValueOrDefault(uid),
+                    approvedPollCounts.GetValueOrDefault(uid),
+                    votesReceivedCounts.GetValueOrDefault(uid));
             }
         }
 
@@ -184,10 +231,16 @@ public class CommentService : ICommentService
             return ServiceResult.Fail("Comment content cannot be empty.");
         }
 
-        var sanitized = Regex.Replace(content.Trim(), @"<[^>]*>", string.Empty);
-        if (sanitized.Length > 1000)
+        // Normalize line endings instead of stripping "<...>" sequences.
+        //
+        // The previous `Regex.Replace(content, "<[^>]*>", "")` was both unnecessary and destructive:
+        // Blazor escapes rendered text by default, so raw markup cannot execute, while the regex ate
+        // legitimate content such as "a < b" or an emoticon like "<3". Length is measured on the
+        // normalized text so the limit reflects what actually gets stored.
+        var sanitized = NormalizeCommentContent(content);
+        if (sanitized.Length > MaxCommentLength)
         {
-            return ServiceResult.Fail("Comment content cannot exceed 1000 characters.");
+            return ServiceResult.Fail($"Comment content cannot exceed {MaxCommentLength} characters.");
         }
 
         await using var context = await _dbContextFactory.CreateDbContextAsync();
@@ -533,4 +586,18 @@ public class CommentService : ICommentService
         await context.SaveChangesAsync();
         return ServiceResult.Ok(comment.IsPinned ? "Comment pinned." : "Comment unpinned.", comment.PollId);
     }
+
+    /// <summary>
+    /// Trims the comment and canonicalises line endings.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately does not strip markup: Blazor HTML-encodes rendered text, so a comment containing
+    /// "&lt;script&gt;" is displayed literally and cannot execute. The regex this replaced removed any
+    /// "&lt;...&gt;" span, which silently corrupted ordinary text ("a &lt; b", "&lt;3") and could let a
+    /// crafted comment smuggle content through the length check.
+    /// </remarks>
+    private static string NormalizeCommentContent(string content) =>
+        content.Trim()
+            .Replace("\r\n", "\n", StringComparison.Ordinal)
+            .Replace('\r', '\n');
 }

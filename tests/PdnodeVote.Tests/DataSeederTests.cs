@@ -59,7 +59,8 @@ public class DataSeederTests
         SqliteConnection connection,
         string environmentName,
         string? bootstrapPassword,
-        CapturingLoggerProvider loggerProvider)
+        CapturingLoggerProvider loggerProvider,
+        Dictionary<string, string?>? extraSettings = null)
     {
         var options = new DbContextOptionsBuilder<ApplicationDbContext>()
             .UseSqlite(connection)
@@ -70,6 +71,13 @@ public class DataSeederTests
         if (bootstrapPassword is not null)
         {
             settings[$"{SystemConstants.BootstrapAdminConfigKey}:Password"] = bootstrapPassword;
+        }
+        if (extraSettings is not null)
+        {
+            foreach (var (key, value) in extraSettings)
+            {
+                settings[key] = value;
+            }
         }
 
         var services = new ServiceCollection();
@@ -179,6 +187,172 @@ public class DataSeederTests
             var userManager = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
             var user = await userManager.FindByIdAsync(SystemConstants.RootAdminId);
             Assert.False(await userManager.IsInRoleAsync(user!, "Admin"));
+        }
+    }
+
+    // ---------------------------------------------------------------- S11
+
+    private const string LegacyAdminId = "11111111-1111-1111-1111-111111111111";
+
+    private static async Task ExecuteSqlAsync(SqliteConnection connection, string sql)
+    {
+        if (connection.State != System.Data.ConnectionState.Open) connection.Open();
+        await using var command = connection.CreateCommand();
+        command.CommandText = sql;
+        await command.ExecuteNonQueryAsync();
+    }
+
+    private static async Task<long> ExecuteScalarAsync(SqliteConnection connection, string sql)
+    {
+        if (connection.State != System.Data.ConnectionState.Open) connection.Open();
+        await using var command = connection.CreateCommand();
+        command.CommandText = sql;
+        return Convert.ToInt64(await command.ExecuteScalarAsync(), System.Globalization.CultureInfo.InvariantCulture);
+    }
+
+    [Fact]
+    public async Task Seeder_MovesLegacyAdminKeyWithoutDanglingReferencesOrDisabledForeignKeys()
+    {
+        using var connection = OpenConnection();
+        var logs = new CapturingLoggerProvider();
+        await using var provider = await BuildProviderAsync(connection, "Development", "Sup3r!Secret9", logs);
+
+        await DataSeeder.SeedAsync(provider);
+
+        // Reproduce a legacy install: the administrator carries a random id and the referencing tables
+        // the old seeder forgot about are populated. The rename itself needs enforcement off (that is
+        // how an identity key change works in SQLite), which is exactly the window S11 was about.
+        await ExecuteSqlAsync(connection,
+            "PRAGMA foreign_keys = OFF;" +
+            $"UPDATE AspNetUsers SET Id = '{LegacyAdminId}' WHERE Id = '{SystemConstants.RootAdminId}';" +
+            $"UPDATE AspNetUserRoles SET UserId = '{LegacyAdminId}' WHERE UserId = '{SystemConstants.RootAdminId}';" +
+            "PRAGMA foreign_keys = ON;");
+
+        using (var scope = provider.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+
+            var category = new Category { Name = "Legacy board", Slug = "legacy-board", Depth = 0, CreatedAt = DateTime.UtcNow };
+            db.Categories.Add(category);
+            var poll = new Poll { Title = "Legacy poll", CreatorId = LegacyAdminId, Status = PollStatus.Approved, CreatedAt = DateTime.UtcNow };
+            db.Polls.Add(poll);
+            await db.SaveChangesAsync();
+
+            var option = new PollOption { PollId = poll.Id, Text = "A", Order = 1 };
+            db.PollOptions.Add(option);
+            var comment = new PollComment { PollId = poll.Id, UserId = LegacyAdminId, Content = "hello", Status = PollStatus.Approved, CreatedAt = DateTime.UtcNow };
+            db.PollComments.Add(comment);
+            var request = new CategoryRequest { Name = "Legacy request", Description = "", ApplicantId = LegacyAdminId, Status = CategoryRequestStatus.Pending, CreatedAt = DateTime.UtcNow };
+            db.CategoryRequests.Add(request);
+            await db.SaveChangesAsync();
+
+            db.VoteRecords.Add(new VoteRecord { PollId = poll.Id, PollOptionId = option.Id, UserId = LegacyAdminId, IpAddress = "198.51.100.7", VotedAt = DateTime.UtcNow });
+            db.CommentLikes.Add(new CommentLike { CommentId = comment.Id, UserId = LegacyAdminId, CreatedAt = DateTime.UtcNow });
+            db.Notifications.Add(new Notification { UserId = LegacyAdminId, Type = NotificationType.SystemNotice, Title = "t", Message = "m", CreatedAt = DateTime.UtcNow });
+            db.ContentReports.Add(new ContentReport { ReporterId = LegacyAdminId, ResolvedById = LegacyAdminId, Reason = "r", CreatedAt = DateTime.UtcNow });
+            db.CategoryModerators.Add(new CategoryModerator { CategoryId = category.Id, UserId = LegacyAdminId, AssignedAt = DateTime.UtcNow });
+            db.CategorySubscriptions.Add(new CategorySubscription { UserId = LegacyAdminId, CategoryId = category.Id, SubscribedAt = DateTime.UtcNow });
+            db.CategoryRequestReviews.Add(new CategoryRequestReview { RequestId = request.Id, ReviewerId = LegacyAdminId, IsApproved = true, ReviewedAt = DateTime.UtcNow });
+            db.UserLogins.Add(new IdentityUserLogin<string> { LoginProvider = "Legacy", ProviderKey = "key", ProviderDisplayName = "Legacy", UserId = LegacyAdminId });
+            db.UserTokens.Add(new IdentityUserToken<string> { UserId = LegacyAdminId, LoginProvider = "Legacy", Name = "token", Value = "v" });
+            db.UserClaims.Add(new IdentityUserClaim<string> { UserId = LegacyAdminId, ClaimType = "legacy", ClaimValue = "1" });
+            await db.SaveChangesAsync();
+        }
+
+        await ExecuteSqlAsync(connection,
+            $"INSERT INTO AspNetUserPasskeys (CredentialId, UserId, Data) VALUES (x'0102030405', '{LegacyAdminId}', '{{}}');");
+
+        // The next startup must converge every reference onto the fixed root id in one shot.
+        await DataSeeder.SeedAsync(provider);
+
+        using (var scope = provider.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+            const string root = SystemConstants.RootAdminId;
+
+            Assert.NotNull(await db.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == root));
+            Assert.Null(await db.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == LegacyAdminId));
+
+            Assert.Equal(1, await db.Polls.CountAsync(p => p.CreatorId == root));
+            Assert.Equal(0, await db.Polls.CountAsync(p => p.CreatorId == LegacyAdminId));
+            Assert.Equal(1, await db.VoteRecords.CountAsync(v => v.UserId == root));
+            Assert.Equal(1, await db.PollComments.CountAsync(c => c.UserId == root));
+            Assert.Equal(1, await db.CommentLikes.CountAsync(l => l.UserId == root));
+            Assert.Equal(1, await db.Notifications.CountAsync(n => n.UserId == root));
+            Assert.Equal(1, await db.ContentReports.CountAsync(r => r.ReporterId == root && r.ResolvedById == root));
+            Assert.Equal(1, await db.CategoryModerators.CountAsync(m => m.UserId == root));
+            Assert.Equal(1, await db.CategorySubscriptions.CountAsync(s => s.UserId == root));
+            Assert.Equal(1, await db.CategoryRequests.CountAsync(r => r.ApplicantId == root));
+            Assert.Equal(1, await db.CategoryRequestReviews.CountAsync(r => r.ReviewerId == root));
+        }
+
+        // Identity satellite tables follow too.
+        Assert.Equal(1L, await ExecuteScalarAsync(connection, $"SELECT COUNT(*) FROM AspNetUserLogins WHERE UserId = '{SystemConstants.RootAdminId}';"));
+        Assert.Equal(1L, await ExecuteScalarAsync(connection, $"SELECT COUNT(*) FROM AspNetUserTokens WHERE UserId = '{SystemConstants.RootAdminId}';"));
+        Assert.Equal(1L, await ExecuteScalarAsync(connection, $"SELECT COUNT(*) FROM AspNetUserClaims WHERE UserId = '{SystemConstants.RootAdminId}';"));
+        Assert.Equal(1L, await ExecuteScalarAsync(connection, $"SELECT COUNT(*) FROM AspNetUserPasskeys WHERE UserId = '{SystemConstants.RootAdminId}';"));
+        Assert.Equal(0L, await ExecuteScalarAsync(connection, $"SELECT COUNT(*) FROM AspNetUserRoles WHERE UserId = '{LegacyAdminId}';"));
+
+        // No dangling references anywhere...
+        Assert.Equal(0L, await ExecuteScalarAsync(connection, "SELECT COUNT(*) FROM pragma_foreign_key_check;"));
+        // ...and enforcement is guaranteed to be back on for this (pooled) connection.
+        Assert.Equal(1L, await ExecuteScalarAsync(connection, "PRAGMA foreign_keys;"));
+    }
+
+    // ---------------------------------------------------------------- L7
+
+    private static async Task<ApplicationUser> CreateModeratorAsync(ServiceProvider provider)
+    {
+        using var scope = provider.CreateScope();
+        var userManager = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
+        var moderator = new ApplicationUser { UserName = "mod@test.com", Email = "mod@test.com" };
+        await userManager.CreateAsync(moderator, "Sup3r!Secret9");
+        await userManager.AddToRoleAsync(moderator, "Moderator");
+        return moderator;
+    }
+
+    [Fact]
+    public async Task Seeder_DoesNotPromoteModeratorsToSuperModeratorOnEveryStartup()
+    {
+        using var connection = OpenConnection();
+        var logs = new CapturingLoggerProvider();
+        await using var provider = await BuildProviderAsync(connection, "Development", "Sup3r!Secret9", logs);
+
+        await DataSeeder.SeedAsync(provider);
+        var moderator = await CreateModeratorAsync(provider);
+
+        // A restart must not silently escalate the account to SuperModerator.
+        await DataSeeder.SeedAsync(provider);
+
+        using (var scope = provider.CreateScope())
+        {
+            var userManager = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
+            var refreshed = await userManager.FindByIdAsync(moderator.Id);
+            Assert.False(await userManager.IsInRoleAsync(refreshed!, "SuperModerator"));
+        }
+    }
+
+    [Fact]
+    public async Task Seeder_PromotesModeratorsOnlyWhenTheSwitchIsEnabled()
+    {
+        using var connection = OpenConnection();
+        var logs = new CapturingLoggerProvider();
+        await using var provider = await BuildProviderAsync(connection, "Development", "Sup3r!Secret9", logs,
+            new Dictionary<string, string?>
+            {
+                [$"{SystemConstants.LegacyDataMigrationConfigKey}:{SystemConstants.PromoteModeratorsToSuperModeratorsSwitch}"] = "true"
+            });
+
+        await DataSeeder.SeedAsync(provider);
+        var moderator = await CreateModeratorAsync(provider);
+
+        await DataSeeder.SeedAsync(provider);
+
+        using (var scope = provider.CreateScope())
+        {
+            var userManager = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
+            var refreshed = await userManager.FindByIdAsync(moderator.Id);
+            Assert.True(await userManager.IsInRoleAsync(refreshed!, "SuperModerator"));
         }
     }
 }

@@ -69,9 +69,12 @@ public class NotificationService : INotificationService
                 .ExecuteUpdateAsync(s => s.SetProperty(n => n.IsRead, true));
         }
 
-        var unread = await context.Notifications.CountAsync(n => n.UserId == userId && !n.IsRead);
-        _notifier.NotifyUserNotification(userId, unread, new NotificationDto { IsRead = true });
-
+        // Deliberately no NotifyUserNotification call here. That channel ("NotificationReceived") is
+        // defined as "a new notification arrived": the client unconditionally inserts the payload into
+        // the bell list. A read operation has no new notification to send, and the previous code sent a
+        // placeholder (Id = 0, empty title), which the bell rendered as a blank entry. The unread badge
+        // is refreshed on demand via GetUnreadNotificationCountAsync, so dropping the event is safe;
+        // cross-tab read-state sync would need a separate client-understood event (see TODO-BUGS.md L6).
         return ServiceResult.Ok();
     }
 

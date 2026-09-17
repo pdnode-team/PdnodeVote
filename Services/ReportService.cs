@@ -43,6 +43,21 @@ public class ReportService : IReportService
         if (reporter == null) return ServiceResult.Fail("User not found or unauthenticated.");
         if (reporter.IsCurrentlyBanned) return ServiceResult.Fail("Your account is suspended.");
 
+        // The target must actually exist before a report is queued. Without this, any authenticated
+        // user could fill the moderation queue with reports pointing at ids that were never real,
+        // and every queue entry would resolve to an empty "author unknown" row for the moderators.
+        if (request.PollId.HasValue
+            && !await context.Polls.AsNoTracking().AnyAsync(p => p.Id == request.PollId.Value))
+        {
+            return ServiceResult.Fail("The poll you tried to report no longer exists.");
+        }
+
+        if (request.CommentId.HasValue
+            && !await context.PollComments.AsNoTracking().AnyAsync(c => c.Id == request.CommentId.Value))
+        {
+            return ServiceResult.Fail("The comment you tried to report no longer exists.");
+        }
+
         // Prevent duplicate spam reporting by the same user
         bool alreadyReported = await context.ContentReports.AnyAsync(r =>
             r.ReporterId == reporterId &&

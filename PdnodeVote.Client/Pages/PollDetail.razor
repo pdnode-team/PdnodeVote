@@ -2,6 +2,7 @@
 @rendermode InteractiveAuto
 @implements IAsyncDisposable
 @using Microsoft.AspNetCore.SignalR.Client
+@using System.Globalization
 @inject IPollApiClient PollApi
 @inject IAdminApiClient AdminApi
 @inject NavigationManager NavigationManager
@@ -277,11 +278,11 @@
                         <span>Created by <a href="@($"/user/{_poll.CreatorName}")" style="color: #38bdf8; text-decoration: none; font-weight: 600;">@_poll.CreatorName</a></span>
                         <UserLevelBadge Level="_poll.CreatorLevel" ShowShort="true" />
                         <span>·</span>
-                        <span>@_poll.CreatedAt.ToLocalTime().ToString("MMM dd, yyyy HH:mm")</span>
+                        <span>@FormatLocal(_poll.CreatedAt)</span>
                         @if (_poll.ExpiresAt.HasValue)
                         {
                             <span>·</span>
-                            <span>Closes @_poll.ExpiresAt.Value.ToLocalTime().ToString("MMM dd, yyyy HH:mm")</span>
+                            <span>Closes @FormatLocal(_poll.ExpiresAt)</span>
                         }
                     </div>
                 </div>
@@ -745,6 +746,16 @@
                 _comments = new();
             }
         }
+        catch (Exception ex)
+        {
+            // Same staleness rule as the success path: a failure for a poll we have already navigated
+            // away from must not repaint the new poll as broken.
+            if (_loadedPollId != requestedId) return;
+
+            ApiErrors.Report("this poll", ex);
+            _poll = null;
+            _comments = new();
+        }
         finally
         {
             if (!isLiveRefresh)
@@ -753,6 +764,30 @@
             }
         }
     }
+
+    /// <summary>
+    /// Formats an API timestamp for display in the viewer's local timezone.
+    /// </summary>
+    /// <remarks>
+    /// The API serialises UTC values that SQLite stored without an offset, so they reach the client
+    /// with <see cref="DateTimeKind.Unspecified"/> and <c>ToLocalTime()</c> is a no-op — every user
+    /// outside UTC saw absolute times shifted by their whole offset. Normalising the kind to UTC
+    /// first (instead of blindly calling <c>SpecifyKind</c>) is what makes the conversion real and
+    /// keeps an already-Utc value from being reinterpreted. Relative "x minutes ago" text is
+    /// deliberately not routed through here: it compares raw ticks and was already correct.
+    /// </remarks>
+    private static string FormatLocal(DateTime? utc) =>
+        utc.HasValue ? FormatLocal(utc.Value) : string.Empty;
+
+    private static string FormatLocal(DateTime utc) =>
+        AsUtc(utc).ToLocalTime().ToString("MMM dd, yyyy HH:mm", CultureInfo.InvariantCulture);
+
+    private static DateTime AsUtc(DateTime value) => value.Kind switch
+    {
+        DateTimeKind.Utc => value,
+        DateTimeKind.Local => value.ToUniversalTime(),
+        _ => DateTime.SpecifyKind(value, DateTimeKind.Utc)
+    };
 
     private bool ShouldShowResults()
     {

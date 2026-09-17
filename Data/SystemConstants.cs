@@ -28,6 +28,24 @@ public static class SystemConstants
     public const string BootstrapAdminPasswordEnvVar = "PDNODEVOTE_ADMIN_PASSWORD";
 
     /// <summary>
+    /// Public origin used when generating absolute URLs (e.g. the poll QR code) so the result does not
+    /// depend on the client-supplied <c>Host</c> header. Example: <c>"PublicBaseUrl": "https://vote.example.com"</c>.
+    /// When unset the request's own scheme/host is used, which is only safe while the app is not behind
+    /// an untrusted proxy and <c>AllowedHosts</c> is restricted.
+    /// </summary>
+    public const string PublicBaseUrlConfigKey = "PublicBaseUrl";
+
+    /// <summary>
+    /// One-off data migrations that must not run on every startup, e.g.
+    /// <c>"DataMigration": { "PromoteModeratorsToSuperModerators": true }</c>. Operators enable a switch,
+    /// let the app start once, then turn it back off; startup never escalates privileges on its own.
+    /// </summary>
+    public const string LegacyDataMigrationConfigKey = "DataMigration";
+
+    /// <summary>Switch name under <see cref="LegacyDataMigrationConfigKey"/> for the L7 moderator promotion.</summary>
+    public const string PromoteModeratorsToSuperModeratorsSwitch = "PromoteModeratorsToSuperModerators";
+
+    /// <summary>
     /// Checks whether a given user ID corresponds to the primary root administrator.
     /// </summary>
     public static bool IsRootAdmin(string? userId) =>

@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Security.Claims;
 using Microsoft.AspNetCore.Components.Authorization;
 using Microsoft.AspNetCore.Hosting;
@@ -20,6 +21,9 @@ public class ServerPollApiClient(
     IDbContextFactory<ApplicationDbContext> dbFactory,
     IWebHostEnvironment env) : IPollApiClient
 {
+    /// <summary>Same ceiling as the HTTP upload endpoint, so the two paths cannot diverge.</summary>
+    private const long MaxImageBytes = 5 * 1024 * 1024;
+
     public async Task<List<Client.Models.PollListItemDto>> GetPollsAsync(string? search = null, string? status = "all", string? sortBy = "latest", int? categoryId = null, string? tag = null)
     {
         return await pollService.GetPollsAsync(search, status, sortBy, categoryId, tag);
@@ -289,14 +293,50 @@ public class ServerPollApiClient(
         var ext = Path.GetExtension(fileName).ToLowerInvariant();
         if (!allowedExts.Contains(ext)) return null;
 
+        // Mirror the HTTP endpoint's 5 MB ceiling (POST /api/upload/image). This path writes straight to
+        // the volume without an HTTP round trip, so without the check a server-interactive client could
+        // push an arbitrarily large "image".
+        if (stream.CanSeek && stream.Length - stream.Position > MaxImageBytes) return null;
+
         var uploadsFolder = Path.Combine(env.WebRootPath ?? Path.Combine(Directory.GetCurrentDirectory(), "wwwroot"), "uploads");
         if (!Directory.Exists(uploadsFolder)) Directory.CreateDirectory(uploadsFolder);
 
         var safeName = $"opt_{Guid.NewGuid():N}{ext}";
         var filePath = Path.Combine(uploadsFolder, safeName);
+        var tooLarge = false;
+
         await using (var fileStream = new FileStream(filePath, FileMode.Create))
         {
-            await stream.CopyToAsync(fileStream);
+            var buffer = ArrayPool<byte>.Shared.Rent(81920);
+            try
+            {
+                long total = 0;
+                int read;
+                while ((read = await stream.ReadAsync(buffer)) > 0)
+                {
+                    total += read;
+                    // A non-seekable stream cannot be measured up front, so stop the moment the ceiling
+                    // is crossed instead of trusting the caller's declared length.
+                    if (total > MaxImageBytes)
+                    {
+                        tooLarge = true;
+                        break;
+                    }
+
+                    await fileStream.WriteAsync(buffer.AsMemory(0, read));
+                }
+            }
+            finally
+            {
+                ArrayPool<byte>.Shared.Return(buffer);
+            }
+        }
+
+        if (tooLarge)
+        {
+            // Never leave the truncated file behind; it would be served as a broken image.
+            File.Delete(filePath);
+            return null;
         }
 
         return $"/uploads/{safeName}";
@@ -352,10 +392,47 @@ public class ServerAdminApiClient(
     ICategoryService categoryService,
     ICommentService commentService,
     IReportService reportService,
-    AuthenticationStateProvider authStateProvider) : IAdminApiClient
+    AuthenticationStateProvider authStateProvider,
+    ILogger<ServerAdminApiClient> logger) : IAdminApiClient
 {
+    /// <summary>
+    /// Resolves the caller's admin/moderation level from the authentication state.
+    /// </summary>
+    /// <remarks>
+    /// This client resolves <c>AdminService</c> (and the moderation services) directly in-process, so
+    /// the route-level policies on <c>/api/admin/*</c> never run for it. The dashboard's own role flags
+    /// are a rendering convenience, not an authorization boundary — every method therefore re-checks
+    /// here, mirroring the policies declared in <c>AdminEndpoints</c>: "Admin" operations require the
+    /// Admin role (or the root admin), moderation queues additionally accept Moderator/SuperModerator.
+    /// </remarks>
+    private async Task<(bool IsAdmin, bool IsModerator)> GetCallerRolesAsync()
+    {
+        var auth = await authStateProvider.GetAuthenticationStateAsync();
+        var userId = auth.User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+
+        bool isAdmin = auth.User.IsInRole("Admin") || PdnodeVote.Data.SystemConstants.IsRootAdmin(userId);
+        bool isModerator = isAdmin
+                           || auth.User.IsInRole("SuperModerator")
+                           || auth.User.IsInRole("Moderator");
+
+        return (isAdmin, isModerator);
+    }
+
+    /// <summary>
+    /// Logs a denied call. Collection-returning methods have to answer with an empty collection, which
+    /// would otherwise look exactly like "there is nothing to moderate" to the caller.
+    /// </summary>
+    private void LogDenied(string operation) =>
+        logger.LogWarning("Denied in-process admin API call {Operation}: the caller lacks the required role.", operation);
+
     public async Task<Client.Models.AdminDashboardStatsDto> GetStatsAsync()
     {
+        if (!(await GetCallerRolesAsync()).IsAdmin)
+        {
+            LogDenied(nameof(GetStatsAsync));
+            return new Client.Models.AdminDashboardStatsDto();
+        }
+
         var stats = await adminService.GetStatsAsync();
         return new Client.Models.AdminDashboardStatsDto
         {
@@ -368,6 +445,12 @@ public class ServerAdminApiClient(
 
     public async Task<List<Client.Models.PendingReviewPollDto>> GetPendingPollsAsync()
     {
+        if (!(await GetCallerRolesAsync()).IsModerator)
+        {
+            LogDenied(nameof(GetPendingPollsAsync));
+            return new List<Client.Models.PendingReviewPollDto>();
+        }
+
         var polls = await pollService.GetPendingReviewPollsAsync();
         return polls.Select(p => new Client.Models.PendingReviewPollDto
         {
@@ -390,12 +473,19 @@ public class ServerAdminApiClient(
 
     public async Task<List<Client.Models.PollListItemDto>> GetAllPollsAsync(string? search = null, Client.Models.PollStatus? status = null)
     {
+        if (!(await GetCallerRolesAsync()).IsAdmin)
+        {
+            LogDenied(nameof(GetAllPollsAsync));
+            return new List<Client.Models.PollListItemDto>();
+        }
+
         PdnodeVote.Data.PollStatus? pollStatus = status.HasValue ? (PdnodeVote.Data.PollStatus)(int)status.Value : null;
         return await pollService.GetAllAdminPollsAsync(search, pollStatus);
     }
 
     public async Task<ServiceResult> ApprovePollAsync(int pollId)
     {
+        if (!(await GetCallerRolesAsync()).IsModerator) { LogDenied(nameof(ApprovePollAsync)); return ServiceResult.Fail("Forbidden"); }
         var auth = await authStateProvider.GetAuthenticationStateAsync();
         var adminId = auth.User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? "";
         var res = await pollService.ApprovePollAsync(pollId, adminId);
@@ -404,6 +494,7 @@ public class ServerAdminApiClient(
 
     public async Task<ServiceResult> ReturnPollForRevisionAsync(int pollId, string reason)
     {
+        if (!(await GetCallerRolesAsync()).IsModerator) { LogDenied(nameof(ReturnPollForRevisionAsync)); return ServiceResult.Fail("Forbidden"); }
         var auth = await authStateProvider.GetAuthenticationStateAsync();
         var adminId = auth.User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? "";
         var res = await pollService.ReturnPollForRevisionAsync(pollId, adminId, reason);
@@ -412,6 +503,7 @@ public class ServerAdminApiClient(
 
     public async Task<ServiceResult> RemovePollAsync(int pollId, string reason)
     {
+        if (!(await GetCallerRolesAsync()).IsModerator) { LogDenied(nameof(RemovePollAsync)); return ServiceResult.Fail("Forbidden"); }
         var auth = await authStateProvider.GetAuthenticationStateAsync();
         var adminId = auth.User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? "";
         var res = await pollService.RemovePollAsync(pollId, adminId, reason);
@@ -420,6 +512,7 @@ public class ServerAdminApiClient(
 
     public async Task<ServiceResult> ArchivePollAsync(int pollId, string reason)
     {
+        if (!(await GetCallerRolesAsync()).IsAdmin) { LogDenied(nameof(ArchivePollAsync)); return ServiceResult.Fail("Forbidden"); }
         var auth = await authStateProvider.GetAuthenticationStateAsync();
         var adminId = auth.User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? "";
         var res = await pollService.ArchivePollAsync(pollId, adminId, reason);
@@ -428,6 +521,7 @@ public class ServerAdminApiClient(
 
     public async Task<ServiceResult> TogglePinPollAsync(int pollId)
     {
+        if (!(await GetCallerRolesAsync()).IsAdmin) { LogDenied(nameof(TogglePinPollAsync)); return ServiceResult.Fail("Forbidden"); }
         var auth = await authStateProvider.GetAuthenticationStateAsync();
         var adminId = auth.User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? "";
         var res = await pollService.TogglePinPollAsync(pollId, adminId);
@@ -436,6 +530,12 @@ public class ServerAdminApiClient(
 
     public async Task<List<Client.Models.AdminUserDto>> GetUsersAsync(int page = 1, int pageSize = 50, string? search = null)
     {
+        if (!(await GetCallerRolesAsync()).IsAdmin)
+        {
+            LogDenied(nameof(GetUsersAsync));
+            return new List<Client.Models.AdminUserDto>();
+        }
+
         var users = await adminService.GetUsersAsync(search);
         return users.Select(u => new Client.Models.AdminUserDto
         {
@@ -454,6 +554,7 @@ public class ServerAdminApiClient(
 
     public async Task<ServiceResult> BanUserAsync(BanUserRequest request)
     {
+        if (!(await GetCallerRolesAsync()).IsAdmin) { LogDenied(nameof(BanUserAsync)); return ServiceResult.Fail("Forbidden"); }
         var auth = await authStateProvider.GetAuthenticationStateAsync();
         var adminId = auth.User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? "";
         bool isPermanent = string.Equals(request.BanType, "Permanent", StringComparison.OrdinalIgnoreCase);
@@ -463,30 +564,40 @@ public class ServerAdminApiClient(
 
     public async Task<ServiceResult> UnbanUserAsync(string userId)
     {
+        if (!(await GetCallerRolesAsync()).IsAdmin) { LogDenied(nameof(UnbanUserAsync)); return ServiceResult.Fail("Forbidden"); }
         var (count, msg) = await adminService.UnbanUsersAsync(new[] { userId });
         return count > 0 ? ServiceResult.Ok(msg) : ServiceResult.Fail(msg);
     }
 
     public async Task<ServiceResult> ResetPasswordAsync(string userId)
     {
+        if (!(await GetCallerRolesAsync()).IsAdmin) { LogDenied(nameof(ResetPasswordAsync)); return ServiceResult.Fail("Forbidden"); }
         var (success, msg, _) = await adminService.ResetUserPasswordAsync(userId);
         return success ? ServiceResult.Ok(msg) : ServiceResult.Fail(msg);
     }
 
     public async Task<ServiceResult> UpdateRoleAsync(UpdateRoleRequest request)
     {
+        if (!(await GetCallerRolesAsync()).IsAdmin) { LogDenied(nameof(UpdateRoleAsync)); return ServiceResult.Fail("Forbidden"); }
         var (success, msg) = await adminService.UpdateUserRoleAsync(request.UserId, request.NewRole, request.Enable);
         return success ? ServiceResult.Ok(msg) : ServiceResult.Fail(msg);
     }
 
     public async Task<ServiceResult> SendBulkEmailAsync(BulkEmailRequest request)
     {
+        if (!(await GetCallerRolesAsync()).IsAdmin) { LogDenied(nameof(SendBulkEmailAsync)); return ServiceResult.Fail("Forbidden"); }
         var (count, msg) = await adminService.SendBulkEmailToUsersAsync(request.UserIds, request.Subject, request.Body);
         return count > 0 ? ServiceResult.Ok(msg) : ServiceResult.Fail(msg);
     }
 
     public async Task<List<CategoryRequestDto>> GetCategoryRequestsAsync()
     {
+        if (!(await GetCallerRolesAsync()).IsModerator)
+        {
+            LogDenied(nameof(GetCategoryRequestsAsync));
+            return new List<CategoryRequestDto>();
+        }
+
         var auth = await authStateProvider.GetAuthenticationStateAsync();
         var userId = auth.User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
         return await categoryService.GetPendingCategoryRequestsAsync(userId);
@@ -494,6 +605,7 @@ public class ServerAdminApiClient(
 
     public async Task<ServiceResult> ReviewCategoryRequestAsync(int requestId, ReviewCategoryRequest request)
     {
+        if (!(await GetCallerRolesAsync()).IsModerator) { LogDenied(nameof(ReviewCategoryRequestAsync)); return ServiceResult.Fail("Forbidden"); }
         var auth = await authStateProvider.GetAuthenticationStateAsync();
         var userId = auth.User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
         if (string.IsNullOrEmpty(userId)) return ServiceResult.Fail("Unauthorized");
@@ -503,11 +615,18 @@ public class ServerAdminApiClient(
 
     public async Task<List<PendingCommentDto>> GetPendingCommentsAsync()
     {
+        if (!(await GetCallerRolesAsync()).IsModerator)
+        {
+            LogDenied(nameof(GetPendingCommentsAsync));
+            return new List<PendingCommentDto>();
+        }
+
         return await commentService.GetPendingCommentsAsync();
     }
 
     public async Task<ServiceResult> ApproveCommentAsync(int commentId)
     {
+        if (!(await GetCallerRolesAsync()).IsModerator) { LogDenied(nameof(ApproveCommentAsync)); return ServiceResult.Fail("Forbidden"); }
         var auth = await authStateProvider.GetAuthenticationStateAsync();
         var userId = auth.User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
         if (string.IsNullOrEmpty(userId)) return ServiceResult.Fail("Unauthorized");
@@ -517,6 +636,7 @@ public class ServerAdminApiClient(
 
     public async Task<ServiceResult> RemoveCommentAsync(int commentId, string reason)
     {
+        if (!(await GetCallerRolesAsync()).IsModerator) { LogDenied(nameof(RemoveCommentAsync)); return ServiceResult.Fail("Forbidden"); }
         var auth = await authStateProvider.GetAuthenticationStateAsync();
         var userId = auth.User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
         if (string.IsNullOrEmpty(userId)) return ServiceResult.Fail("Unauthorized");
@@ -526,11 +646,18 @@ public class ServerAdminApiClient(
 
     public async Task<PagedResult<ContentReportDto>> GetPendingReportsAsync(int page = 1, int pageSize = 15)
     {
+        if (!(await GetCallerRolesAsync()).IsModerator)
+        {
+            LogDenied(nameof(GetPendingReportsAsync));
+            return new PagedResult<ContentReportDto> { Page = page, PageSize = pageSize };
+        }
+
         return await reportService.GetPendingReportsAsync(page, pageSize);
     }
 
     public async Task<ServiceResult> ResolveReportAsync(int reportId, ResolveReportRequest request)
     {
+        if (!(await GetCallerRolesAsync()).IsModerator) { LogDenied(nameof(ResolveReportAsync)); return ServiceResult.Fail("Forbidden"); }
         var auth = await authStateProvider.GetAuthenticationStateAsync();
         var adminId = auth.User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? "";
 
@@ -539,6 +666,12 @@ public class ServerAdminApiClient(
 
     public async Task<PagedResult<Client.Models.AdminUserDto>> GetUsersPagedAsync(int page = 1, int pageSize = 15, string? search = null, string? roleFilter = null)
     {
+        if (!(await GetCallerRolesAsync()).IsAdmin)
+        {
+            LogDenied(nameof(GetUsersPagedAsync));
+            return new PagedResult<Client.Models.AdminUserDto> { Page = page, PageSize = pageSize };
+        }
+
         var res = await adminService.GetUsersPagedAsync(page, pageSize, search, roleFilter);
         return new PagedResult<Client.Models.AdminUserDto>
         {

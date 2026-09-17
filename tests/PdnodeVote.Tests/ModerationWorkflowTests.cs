@@ -95,7 +95,7 @@ public class ModerationWorkflowTests : IDisposable
         _emailService = new TestEmailNotificationService();
 
         var userStore = new UserStore<ApplicationUser>(_dbContext);
-        var userOptions = Options.Create(new IdentityOptions());
+        var userOptions = IdentityTestServices.TokenProviderIdentityOptions;
         _userManager = new UserManager<ApplicationUser>(
             userStore,
             userOptions,
@@ -104,7 +104,9 @@ public class ModerationWorkflowTests : IDisposable
             new IPasswordValidator<ApplicationUser>[0],
             new UpperInvariantLookupNormalizer(),
             new IdentityErrorDescriber(),
-            null!,
+            // AdminService.ResetUserPasswordAsync now goes through Identity's reset-token flow, which
+            // resolves its token provider from UserManager.Services (previously null! here).
+            IdentityTestServices.TokenProviderServices,
             NullLogger<UserManager<ApplicationUser>>.Instance);
 
         var roleStore = new RoleStore<IdentityRole>(_dbContext);

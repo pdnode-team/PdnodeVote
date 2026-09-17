@@ -3,7 +3,9 @@
 @if (IsResultMode)
 {
     <div class="result-option-box @(IsUserChoice ? "user-voted" : "")">
-        <div class="result-progress-fill" style="width: @(Option.Percentage)%;"></div>
+        @* InvariantCulture: a comma-decimal locale would render "width: 33,3%", which the browser
+           rejects and the progress bar collapses to zero. *@
+        <div class="result-progress-fill" style="width: @(Option.Percentage.ToString(System.Globalization.CultureInfo.InvariantCulture))%;"></div>
         <div class="result-content-wrap">
             <div class="d-flex align-center gap-3">
                 @if (!string.IsNullOrEmpty(Option.ImageUrl))

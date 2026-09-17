@@ -65,8 +65,12 @@ public class EmailNotificationService : IEmailNotificationService
 
         if (string.IsNullOrWhiteSpace(host))
         {
-            _logger.LogInformation("[Email Dispatched (Console Fallback)] To: {ToEmail} | Subject: {Subject}\nBody Content:\n{Body}", 
-                toEmail, subject, htmlBody);
+            // Never log htmlBody here. Password-reset mail carries a plaintext temporary password and
+            // Identity mail carries single-use links/codes, so logging the body would write live
+            // credentials and tokens into the log sink. Recipient + subject are enough to diagnose.
+            _logger.LogInformation(
+                "Email not sent: SMTP is not configured. To: {ToEmail} | Subject: {Subject}",
+                toEmail, subject);
             return;
         }
 
@@ -99,7 +103,7 @@ public class EmailNotificationService : IEmailNotificationService
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to send SMTP email to {ToEmail}. Fallback logged. Subject: {Subject}", toEmail, subject);
+            _logger.LogWarning(ex, "Failed to send SMTP email to {ToEmail}. Email was NOT delivered. Subject: {Subject}", toEmail, subject);
         }
     }
 

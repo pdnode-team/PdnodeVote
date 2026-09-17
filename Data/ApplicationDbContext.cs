@@ -163,6 +163,11 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
         builder.Entity<Poll>()
             .HasIndex(p => p.Status);
 
+        // The public feed always sorts by (IsPinned DESC, CreatedAt DESC) over the Approved subset, so
+        // give that path a covering index instead of relying on three single-column indexes.
+        builder.Entity<Poll>()
+            .HasIndex(p => new { p.Status, p.IsPinned, p.CreatedAt });
+
         builder.Entity<Poll>()
             .HasIndex(p => p.IsPinned);
 
@@ -174,6 +179,12 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
 
         builder.Entity<Tag>()
             .HasIndex(t => t.Name)
+            .IsUnique();
+
+        // Category slugs are generated from the name with a Ticks-suffix fallback for collisions; that
+        // check is a read-then-write, so make the database enforce uniqueness too.
+        builder.Entity<Category>()
+            .HasIndex(c => c.Slug)
             .IsUnique();
 
         builder.Entity<PollComment>()

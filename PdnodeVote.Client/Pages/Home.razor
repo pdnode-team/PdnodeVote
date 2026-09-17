@@ -506,6 +506,13 @@ else
         {
             _polls = await PollApi.GetPollsAsync(_searchText, _selectedStatus, _selectedSort, _selectedCategoryId, _selectedTag);
         }
+        catch (Exception ex)
+        {
+            // The HTTP client already reports read failures to ApiErrors; this catch covers the
+            // server-circuit client, which throws instead of returning a fallback. Without it a
+            // first load could tear down the circuit instead of showing the retry banner.
+            ApiErrors.Report("the poll list", ex);
+        }
         finally
         {
             if (!isLiveRefresh)

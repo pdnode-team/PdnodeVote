@@ -4,7 +4,12 @@ using PdnodeVote.Data;
 
 namespace PdnodeVote.Components.Account;
 
-// Remove the "else if (EmailSender is IdentityNoOpEmailSender)" block from RegisterConfirmation.razor after updating with a real implementation.
+// DO NOT REGISTER THIS CLASS. It is a template leftover kept only because
+// RegisterConfirmation.razor type-checks against it (`EmailSender is IdentityNoOpEmailSender`) to decide
+// whether it may show a confirmation link; deleting the type would break that component's build.
+// The DI container binds IEmailSender<ApplicationUser> to IdentityEmailSender (Program.cs), so mails are
+// never silently swallowed here — a registered no-op sender would look like "email sent" while nothing
+// left the process.
 internal sealed class IdentityNoOpEmailSender : IEmailSender<ApplicationUser>
 {
     private readonly IEmailSender emailSender = new NoOpEmailSender();

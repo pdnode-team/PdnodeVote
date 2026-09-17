@@ -5,6 +5,7 @@
 @inject AuthenticationStateProvider AuthStateProvider
 @inject IPollApiClient PollApi
 @inject NavigationManager Navigation
+@inject ISnackbar Snackbar
 @implements IAsyncDisposable
 
 <div class="notification-bell-container">
@@ -109,7 +110,7 @@
                             <div>
                                 <div class="notif-modal-type-badge">@GetCategoryName(_selectedNotification.Type)</div>
                                 <div class="notif-modal-time">
-                                    @_selectedNotification.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm") · @FormatTimeAgo(_selectedNotification.CreatedAt)
+                                    @FormatLocal(_selectedNotification.CreatedAt, "yyyy-MM-dd HH:mm") · @FormatTimeAgo(_selectedNotification.CreatedAt)
                                 </div>
                             </div>
                         </div>
@@ -735,24 +736,39 @@
     private async Task MarkAllAsRead()
     {
         var res = await PollApi.MarkNotificationsAsReadAsync(null);
-        if (res.Success)
+        if (!res.Success)
         {
-            _unreadCount = 0;
-            foreach (var n in _notifications) n.IsRead = true;
-            StateHasChanged();
+            // Previously the badge was zeroed regardless, so a failed or rate-limited call left the
+            // UI claiming everything was read until a reload.
+            Snackbar.Add(res.Message ?? "Could not mark notifications as read.", Severity.Error);
+            return;
         }
+
+        _unreadCount = 0;
+        foreach (var n in _notifications) n.IsRead = true;
+        StateHasChanged();
     }
 
-    private void OpenDetailModal(NotificationDto item)
+    private async Task OpenDetailModal(NotificationDto item)
     {
         _selectedNotification = item;
         _isOpen = false; // close the dropdown menu
 
-        if (!item.IsRead)
+        if (item.IsRead) return;
+
+        // Optimistic, but the result is now awaited so a failure can be reverted instead of being
+        // silently discarded (the write used to be fire-and-forget).
+        var wasRead = item.IsRead;
+        item.IsRead = true;
+        _unreadCount = Math.Max(0, _unreadCount - 1);
+
+        var res = await PollApi.MarkNotificationsAsReadAsync(item.Id);
+        if (!res.Success)
         {
-            item.IsRead = true;
-            _unreadCount = Math.Max(0, _unreadCount - 1);
-            _ = PollApi.MarkNotificationsAsReadAsync(item.Id);
+            item.IsRead = wasRead;
+            _unreadCount = Math.Min(_notifications.Count, _unreadCount + 1);
+            Snackbar.Add(res.Message ?? "Could not mark the notification as read.", Severity.Error);
+            StateHasChanged();
         }
     }
 
@@ -803,14 +819,29 @@
         _ => "icon-blue"
     };
 
+    /// <summary>
+    /// Normalizes the value's Kind before converting: the API serializes UTC without a zone marker,
+    /// so values arrive as <see cref="DateTimeKind.Unspecified"/> and <c>ToLocalTime()</c> would be a
+    /// no-op, showing UTC to every user outside UTC.
+    /// </summary>
+    private static DateTime AsUtc(DateTime value) => value.Kind switch
+    {
+        DateTimeKind.Utc => value,
+        DateTimeKind.Local => value.ToUniversalTime(),
+        _ => DateTime.SpecifyKind(value, DateTimeKind.Utc)
+    };
+
+    private static string FormatLocal(DateTime utc, string format = "MMM dd, yyyy HH:mm") =>
+        AsUtc(utc).ToLocalTime().ToString(format, System.Globalization.CultureInfo.InvariantCulture);
+
     private static string FormatTimeAgo(DateTime dt)
     {
-        var span = DateTime.UtcNow - dt;
+        var span = DateTime.UtcNow - AsUtc(dt);
         if (span.TotalMinutes < 1) return "just now";
         if (span.TotalMinutes < 60) return $"{(int)span.TotalMinutes}m ago";
         if (span.TotalHours < 24) return $"{(int)span.TotalHours}h ago";
         if (span.TotalDays < 30) return $"{(int)span.TotalDays}d ago";
-        return dt.ToLocalTime().ToString("MMM dd");
+        return FormatLocal(dt, "MMM dd");
     }
 
     public async ValueTask DisposeAsync()

@@ -13,8 +13,24 @@ public class PollService(
     IEmailNotificationService emailNotificationService,
     UserManager<ApplicationUser> userManager,
     IPollEventNotifier? pollEventNotifier = null,
-    INotificationService? notificationService = null)
+    INotificationService? notificationService = null,
+    ICategoryService? categoryService = null)
 {
+    // Server-side content limits. The Blazor UI enforces the same numbers, but the API is reachable
+    // directly; without these an oversized title/description/option list is persisted verbatim
+    // (storage DoS) and can overflow bounded columns such as Notification.Message.
+    public const int MaxTitleLength = 100;
+    public const int MaxDescriptionLength = 500;
+    public const int MinOptionCount = 2;
+    public const int MaxOptionCount = 20;
+    public const int MaxOptionTextLength = 200;
+    public const int MaxTagLength = 30;
+    public const int MaxTagsPerPoll = 5;
+
+    // Upper bound for feed pagination: an unclamped pageSize let an anonymous caller eager-load the
+    // whole table through the Include()s in GetPollFeedAsync.
+    public const int MaxFeedPageSize = 100;
+
     public static string FormatDisplayName(string? userName, string? email = null)
     {
         if (!string.IsNullOrWhiteSpace(userName))
@@ -200,12 +216,19 @@ public class PollService(
 
         var result = new List<PendingReviewPollDto>();
 
+        // One grouped count covering every creator instead of one CountAsync per pending poll.
+        var creatorIds = pendingPolls.Select(p => p.CreatorId).Distinct().ToList();
+        var approvedCountsByCreator = await context.Polls
+            .Where(p => creatorIds.Contains(p.CreatorId) && p.Status == PollStatus.Approved)
+            .GroupBy(p => p.CreatorId)
+            .Select(g => new { CreatorId = g.Key, Count = g.Count() })
+            .ToDictionaryAsync(x => x.CreatorId, x => x.Count);
+
         foreach (var poll in pendingPolls)
         {
             var creator = poll.Creator;
             var creatorCreatedAt = creator?.CreatedAt ?? DateTime.UtcNow;
-            var approvedCount = await context.Polls
-                .CountAsync(p => p.CreatorId == poll.CreatorId && p.Status == PollStatus.Approved);
+            var approvedCount = approvedCountsByCreator.GetValueOrDefault(poll.CreatorId);
 
             var reasons = new List<string>();
             var accountAgeDays = (DateTime.UtcNow - creatorCreatedAt).TotalDays;
@@ -289,6 +312,183 @@ public class PollService(
                 IsPinned = p.IsPinned
             };
         }).ToList();
+    }
+
+    /// <summary>
+    /// Validates author-supplied poll content against the server-side limits and returns the
+    /// user-facing reason when invalid, or <c>null</c> when valid.
+    /// </summary>
+    private static string? ValidatePollContent(string? title, string? description, IReadOnlyList<string> cleanedOptions)
+    {
+        var trimmedTitle = title?.Trim() ?? string.Empty;
+        if (trimmedTitle.Length == 0)
+        {
+            return "Poll title cannot be empty.";
+        }
+        if (trimmedTitle.Length > MaxTitleLength)
+        {
+            return $"Poll title cannot exceed {MaxTitleLength} characters.";
+        }
+
+        var trimmedDescription = description?.Trim();
+        if (!string.IsNullOrEmpty(trimmedDescription) && trimmedDescription.Length > MaxDescriptionLength)
+        {
+            return $"Poll description cannot exceed {MaxDescriptionLength} characters.";
+        }
+
+        if (cleanedOptions.Count < MinOptionCount)
+        {
+            return "At least 2 valid options are required.";
+        }
+        if (cleanedOptions.Count > MaxOptionCount)
+        {
+            return $"A poll cannot have more than {MaxOptionCount} options.";
+        }
+        if (cleanedOptions.Any(o => o.Length > MaxOptionTextLength))
+        {
+            return $"Each option cannot exceed {MaxOptionTextLength} characters.";
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Enforces <see cref="CategoryPostPermission"/> when a poll is placed in (or moved to) a board.
+    /// </summary>
+    /// <remarks>
+    /// Delegates to <see cref="ICategoryService.GetPostDenialAsync(int?, string, bool, bool)"/> so the
+    /// rule has exactly one definition instead of two divergent copies. The local copy did not consult
+    /// the <c>CategoryModerators</c> mapping, so a board-level moderator assignment had no effect on the
+    /// write path (TODO-BUGS.md L5). The inline fallback below is used only when no category service was
+    /// injected (unit tests build this service by hand); it implements the same rule.
+    /// </remarks>
+    private async Task<(bool Allowed, string Message)> CanPostInCategoryAsync(
+        ApplicationDbContext context, int? categoryId, bool isAdmin, bool isAdminOrMod,
+        string? userId = null, ApplicationUser? user = null)
+    {
+        if (!categoryId.HasValue)
+        {
+            return (true, string.Empty);
+        }
+
+        if (categoryService is not null && !string.IsNullOrEmpty(userId))
+        {
+            var denial = await categoryService.GetPostDenialAsync(categoryId, userId, isAdmin, isAdminOrMod);
+            return denial is null
+                ? (true, string.Empty)
+                : (false, DescribeDenial(denial.Value));
+        }
+
+        var category = await context.Categories.AsNoTracking().FirstOrDefaultAsync(c => c.Id == categoryId.Value);
+        if (category == null)
+        {
+            return (false, DescribeDenial(CategoryPostDenial.BoardNotFound));
+        }
+
+        if (category.PostPermission == CategoryPostPermission.AdminOnly && !isAdmin)
+        {
+            return (false, DescribeDenial(CategoryPostDenial.AdministratorsOnly));
+        }
+        if (category.PostPermission == CategoryPostPermission.ModeratorOnly && !isAdminOrMod)
+        {
+            return (false, DescribeDenial(CategoryPostDenial.ModeratorsOnly));
+        }
+
+        // Same board-level moderator rule as CategoryService, so behavior does not depend on whether the
+        // optional dependency happens to be present.
+        if (category.PostPermission == CategoryPostPermission.ModeratorOnly && !isAdmin)
+        {
+            bool isSuperMod = user is not null && await userManager.IsInRoleAsync(user, "SuperModerator");
+            if (!isSuperMod && !string.IsNullOrEmpty(userId))
+            {
+                bool assigned = await context.CategoryModerators.AnyAsync(cm => cm.CategoryId == category.Id);
+                if (assigned && !await context.CategoryModerators.AnyAsync(cm => cm.CategoryId == category.Id && cm.UserId == userId))
+                {
+                    return (false, DescribeDenial(CategoryPostDenial.NotAssignedModerator));
+                }
+            }
+        }
+
+        return (true, string.Empty);
+    }
+
+    private static string DescribeDenial(CategoryPostDenial denial) => denial switch
+    {
+        CategoryPostDenial.BoardNotFound => "The selected board does not exist.",
+        CategoryPostDenial.AdministratorsOnly => "This board is restricted to administrators only.",
+        CategoryPostDenial.ModeratorsOnly => "This board is restricted to moderators and administrators only.",
+        CategoryPostDenial.NotAssignedModerator => "This board is restricted to its assigned moderators.",
+        _ => "You do not have permission to post in this board."
+    };
+
+    /// <summary>
+    /// Resolves the moderation privileges of a user for board-permission checks.
+    /// </summary>
+    private async Task<(bool IsAdmin, bool IsAdminOrMod)> GetModerationFlagsAsync(ApplicationUser? user)
+    {
+        if (user == null)
+        {
+            return (false, false);
+        }
+
+        bool isAdmin = user.IsRootAdmin || await userManager.IsInRoleAsync(user, "Admin");
+        bool isModerator = await userManager.IsInRoleAsync(user, "SuperModerator")
+                           || await userManager.IsInRoleAsync(user, "Moderator");
+        return (isAdmin, isAdmin || isModerator);
+    }
+
+    /// <summary>
+    /// Normalizes author-supplied tag names: trimmed, non-empty, length-capped, deduplicated
+    /// case-insensitively and limited to <see cref="MaxTagsPerPoll"/> entries.
+    /// </summary>
+    private static List<string> NormalizeTagNames(IEnumerable<string>? tags) =>
+        tags == null
+            ? new List<string>()
+            : tags.Where(t => !string.IsNullOrWhiteSpace(t))
+                  .Select(t => t.Trim())
+                  .Where(t => t.Length <= MaxTagLength)
+                  .Distinct(StringComparer.OrdinalIgnoreCase)
+                  .Take(MaxTagsPerPoll)
+                  .ToList();
+
+    /// <summary>
+    /// Replaces the poll's tags with <paramref name="newTagNames"/> while keeping
+    /// <see cref="Tag.UsageCount"/> consistent: only genuinely added tags are incremented and only
+    /// genuinely removed ones are decremented (never below zero).
+    /// </summary>
+    /// <remarks>
+    /// The previous code incremented every tag on each edit (unchanged tags included) and never
+    /// decremented removed ones, so the popular-tag ranking drifted upwards forever.
+    /// </remarks>
+    private async Task ApplyTagsAsync(ApplicationDbContext context, Poll poll, List<string> newTagNames)
+    {
+        var oldTagNames = poll.PollTags
+            .Where(pt => pt.Tag != null)
+            .Select(pt => pt.Tag!.Name)
+            .ToList();
+        var oldNames = new HashSet<string>(oldTagNames, StringComparer.OrdinalIgnoreCase);
+        var newNames = new HashSet<string>(newTagNames, StringComparer.OrdinalIgnoreCase);
+
+        foreach (var pollTag in poll.PollTags)
+        {
+            if (pollTag.Tag != null && !newNames.Contains(pollTag.Tag.Name))
+            {
+                pollTag.Tag.UsageCount = Math.Max(0, pollTag.Tag.UsageCount - 1);
+            }
+        }
+
+        context.PollTags.RemoveRange(poll.PollTags);
+        poll.PollTags.Clear();
+
+        foreach (var tagName in newTagNames)
+        {
+            var tag = await GetOrCreateTagAsync(context, tagName);
+            if (!oldNames.Contains(tag.Name))
+            {
+                tag.UsageCount++;
+            }
+            poll.PollTags.Add(new PollTag { Tag = tag });
+        }
     }
 
     /// <summary>
@@ -605,9 +805,10 @@ public class PollService(
             cleanedOptions = optionItems.Where(o => !string.IsNullOrWhiteSpace(o.Text)).Select(o => o.Text.Trim()).ToList();
         }
 
-        if (cleanedOptions.Count < 2)
+        var validationError = ValidatePollContent(title, description, cleanedOptions);
+        if (validationError != null)
         {
-            return (false, "At least 2 valid options are required.", 0);
+            return (false, validationError, 0);
         }
 
         await using var context = await dbContextFactory.CreateDbContextAsync();
@@ -632,22 +833,10 @@ public class PollService(
         bool isAdminOrMod = isAdmin || isSuperMod || isMod;
 
         // Check category permissions
-        if (categoryId.HasValue)
+        var categoryCheck = await CanPostInCategoryAsync(context, categoryId, isAdmin, isAdminOrMod, creatorId, creator);
+        if (!categoryCheck.Allowed)
         {
-            var category = await context.Categories.AsNoTracking().FirstOrDefaultAsync(c => c.Id == categoryId.Value);
-            if (category == null)
-            {
-                return (false, "The selected board does not exist.", 0);
-            }
-
-            if (category.PostPermission == CategoryPostPermission.AdminOnly && !isAdmin)
-            {
-                return (false, "This board is restricted to administrators only.", 0);
-            }
-            if (category.PostPermission == CategoryPostPermission.ModeratorOnly && !isAdminOrMod)
-            {
-                return (false, "This board is restricted to moderators and administrators only.", 0);
-            }
+            return (false, categoryCheck.Message, 0);
         }
 
         // Gating logic:
@@ -695,18 +884,10 @@ public class PollService(
                 }).ToList()
         };
 
-        // Tags handling (up to 5 tags)
+        // Tags handling (up to MaxTagsPerPoll tags)
         if (tags != null && tags.Count > 0)
         {
-            var cleanTagNames = tags
-                .Where(t => !string.IsNullOrWhiteSpace(t))
-                .Select(t => t.Trim())
-                .Where(t => t.Length <= 30)
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .Take(5)
-                .ToList();
-
-            foreach (var tagName in cleanTagNames)
+            foreach (var tagName in NormalizeTagNames(tags))
             {
                 var tag = await GetOrCreateTagAsync(context, tagName);
                 tag.UsageCount++;
@@ -739,9 +920,10 @@ public class PollService(
             .Select(t => t.Trim())
             .ToList();
 
-        if (cleanedOptions.Count < 2)
+        var validationError = ValidatePollContent(title, description, cleanedOptions);
+        if (validationError != null)
         {
-            return (false, "At least 2 valid options are required.");
+            return (false, validationError);
         }
 
         await using var context = await dbContextFactory.CreateDbContextAsync();
@@ -780,6 +962,16 @@ public class PollService(
         poll.Description = string.IsNullOrWhiteSpace(description) ? null : description.Trim();
         poll.Status = PollStatus.PendingReview;
         poll.ModerationReason = null; // Clear rejection reason
+
+        // Re-check the board permission: moving a poll into an AdminOnly/ModeratorOnly board must be
+        // subject to the same rule CreatePollAsync enforces.
+        if (categoryId is > 0)
+        {
+            var editor = await userManager.FindByIdAsync(userId);
+            var (editorIsAdmin, editorIsAdminOrMod) = await GetModerationFlagsAsync(editor);
+            var categoryCheck = await CanPostInCategoryAsync(context, categoryId, editorIsAdmin, editorIsAdminOrMod, userId, editor);
+            if (!categoryCheck.Allowed) return (false, categoryCheck.Message);
+        }
         if (categoryId.HasValue) poll.CategoryId = categoryId.Value;
 
         // Safe now that votes are ruled out above: replace the option rows.
@@ -791,33 +983,10 @@ public class PollService(
             Order = i + 1
         }).ToList();
 
-        // Update tags
+        // Update tags (only added/removed tags adjust UsageCount)
         if (tags != null)
         {
-            context.PollTags.RemoveRange(poll.PollTags);
-            poll.PollTags.Clear();
-            var cleanTagNames = tags
-                .Where(t => !string.IsNullOrWhiteSpace(t))
-                .Select(t => t.Trim())
-                .Where(t => t.Length <= 30)
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .Take(5)
-                .ToList();
-
-            foreach (var tagName in cleanTagNames)
-            {
-                var tag = await context.Tags.FirstOrDefaultAsync(t => t.Name.ToLower() == tagName.ToLower());
-                if (tag == null)
-                {
-                    tag = new Tag { Name = tagName, UsageCount = 1, CreatedAt = DateTime.UtcNow };
-                    context.Tags.Add(tag);
-                }
-                else
-                {
-                    tag.UsageCount++;
-                }
-                poll.PollTags.Add(new PollTag { Tag = tag });
-            }
+            await ApplyTagsAsync(context, poll, NormalizeTagNames(tags));
         }
 
         await context.SaveChangesAsync();
@@ -854,6 +1023,13 @@ public class PollService(
 
         var poll = await context.Polls.Include(p => p.Creator).FirstOrDefaultAsync(p => p.Id == pollId);
         if (poll == null) return (false, "Poll not found.");
+
+        // State machine guard: only a poll awaiting review (or one returned to its author) can be
+        // approved. Without this an already Removed poll could be re-published simply by approving it.
+        if (poll.Status != PollStatus.PendingReview && poll.Status != PollStatus.ReturnedForRevision)
+        {
+            return (false, $"Only polls pending review or returned for revision can be approved. This poll is currently {poll.Status}.");
+        }
 
         poll.Status = PollStatus.Approved;
         poll.ModerationReason = null;
@@ -897,6 +1073,12 @@ public class PollService(
             .Include(p => p.Votes)
             .FirstOrDefaultAsync(p => p.Id == pollId);
         if (poll == null) return (false, "Poll not found.");
+
+        // State machine guard: reverting is only meaningful for a pending or already approved poll.
+        if (poll.Status != PollStatus.PendingReview && poll.Status != PollStatus.Approved)
+        {
+            return (false, $"Only polls pending review or approved can be returned for revision. This poll is currently {poll.Status}.");
+        }
 
         // A poll that already has votes cannot be returned for revision: the author's resubmit
         // rewrites the options, which cascade-deletes the vote records. UpdatePollAsync and
@@ -983,6 +1165,13 @@ public class PollService(
         var poll = await context.Polls.Include(p => p.Creator).FirstOrDefaultAsync(p => p.Id == pollId);
         if (poll == null) return (false, "Poll not found.");
 
+        // State machine guard: archiving closes an already published poll. A Removed poll must stay
+        // removed (archiving it would also rewrite its moderation reason).
+        if (poll.Status != PollStatus.Approved)
+        {
+            return (false, $"Only approved polls can be archived. This poll is currently {poll.Status}.");
+        }
+
         poll.Status = PollStatus.Archived;
         poll.ModerationReason = string.IsNullOrWhiteSpace(reason) ? null : reason.Trim();
         await context.SaveChangesAsync();
@@ -1008,6 +1197,12 @@ public class PollService(
         var poll = await context.Polls.Include(p => p.Creator).FirstOrDefaultAsync(p => p.Id == pollId);
         if (poll == null) return (false, "Poll not found.", false);
 
+        // Removed content must not become a pinned/highlighted entry again.
+        if (poll.Status == PollStatus.Removed)
+        {
+            return (false, "Removed polls cannot be pinned.", poll.IsPinned);
+        }
+
         poll.IsPinned = !poll.IsPinned;
         await context.SaveChangesAsync();
         pollEventNotifier?.NotifyPollUpdated(pollId);
@@ -1029,7 +1224,9 @@ public class PollService(
 
         await using var context = await dbContextFactory.CreateDbContextAsync();
 
-        var poll = await context.Polls.FirstOrDefaultAsync(p => p.Id == pollId);
+        var poll = await context.Polls
+            .Include(p => p.PollTags).ThenInclude(pt => pt.Tag)
+            .FirstOrDefaultAsync(p => p.Id == pollId);
         if (poll == null)
         {
             return (false, "Poll not found or already deleted.");
@@ -1041,6 +1238,15 @@ public class PollService(
         if (poll.CreatorId != userId && !isAdmin)
         {
             return (false, "You do not have permission to delete this poll.");
+        }
+
+        // Keep UsageCount consistent with the tag rows that are about to cascade away.
+        foreach (var pollTag in poll.PollTags)
+        {
+            if (pollTag.Tag != null)
+            {
+                pollTag.Tag.UsageCount = Math.Max(0, pollTag.Tag.UsageCount - 1);
+            }
         }
 
         context.Polls.Remove(poll);
@@ -1064,6 +1270,9 @@ public class PollService(
     {
         if (page < 1) page = 1;
         if (pageSize < 1) pageSize = 15;
+        // Clamp the upper bound too: otherwise ?pageSize=100000000 made the anonymous path eager-load
+        // the whole table (all the Include()s above) in a single request.
+        if (pageSize > MaxFeedPageSize) pageSize = MaxFeedPageSize;
 
         await using var context = await dbContextFactory.CreateDbContextAsync();
 
@@ -1525,11 +1734,44 @@ public class PollService(
         if (poll == null) return ServiceResult.Fail("Poll not found.");
 
         var user = await userManager.FindByIdAsync(userId);
-        bool isAdmin = user != null && (await userManager.IsInRoleAsync(user, "Admin") || user.IsRootAdmin);
+        var (isAdmin, isAdminOrMod) = await GetModerationFlagsAsync(user);
 
         if (poll.CreatorId != userId && !isAdmin)
         {
             return ServiceResult.Fail("You do not have permission to edit this poll.");
+        }
+
+        // Server-side content limits for the fields this endpoint can change.
+        if (!string.IsNullOrWhiteSpace(request.Title) && request.Title.Trim().Length > MaxTitleLength)
+        {
+            return ServiceResult.Fail($"Poll title cannot exceed {MaxTitleLength} characters.");
+        }
+        if (request.Description != null && request.Description.Trim().Length > MaxDescriptionLength)
+        {
+            return ServiceResult.Fail($"Poll description cannot exceed {MaxDescriptionLength} characters.");
+        }
+        if (request.Options != null)
+        {
+            var providedOptions = request.Options
+                .Where(o => !string.IsNullOrWhiteSpace(o))
+                .Select(o => o.Trim())
+                .ToList();
+            if (providedOptions.Count > MaxOptionCount)
+            {
+                return ServiceResult.Fail($"A poll cannot have more than {MaxOptionCount} options.");
+            }
+            if (providedOptions.Any(o => o.Length > MaxOptionTextLength))
+            {
+                return ServiceResult.Fail($"Each option cannot exceed {MaxOptionTextLength} characters.");
+            }
+        }
+
+        // A board change must satisfy the same PostPermission rule as creating a poll there.
+        var targetCategoryId = request.CategoryId is > 0 ? request.CategoryId : null;
+        if (targetCategoryId.HasValue)
+        {
+            var categoryCheck = await CanPostInCategoryAsync(context, targetCategoryId, isAdmin, isAdminOrMod, userId, user);
+            if (!categoryCheck.Allowed) return ServiceResult.Fail(categoryCheck.Message);
         }
 
         int totalVotes = poll.Votes.Count;
@@ -1584,7 +1826,8 @@ public class PollService(
         // Always allowed: Description, Category, Tags
         if (request.Description != null)
         {
-            poll.Description = request.Description.Trim();
+            // Blank means "no description", matching CreatePollAsync.
+            poll.Description = string.IsNullOrWhiteSpace(request.Description) ? null : request.Description.Trim();
         }
 
         if (request.CategoryId.HasValue)
@@ -1592,33 +1835,10 @@ public class PollService(
             poll.CategoryId = request.CategoryId.Value > 0 ? request.CategoryId.Value : null;
         }
 
+        // Update tags (only added/removed tags adjust UsageCount)
         if (request.Tags != null)
         {
-            context.PollTags.RemoveRange(poll.PollTags);
-            poll.PollTags.Clear();
-
-            var cleanTags = request.Tags
-                .Where(t => !string.IsNullOrWhiteSpace(t))
-                .Select(t => t.Trim())
-                .Where(t => t.Length <= 30)
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .Take(5)
-                .ToList();
-
-            foreach (var tagName in cleanTags)
-            {
-                var tag = await context.Tags.FirstOrDefaultAsync(t => t.Name.ToLower() == tagName.ToLower());
-                if (tag == null)
-                {
-                    tag = new Tag { Name = tagName, UsageCount = 1, CreatedAt = DateTime.UtcNow };
-                    context.Tags.Add(tag);
-                }
-                else
-                {
-                    tag.UsageCount++;
-                }
-                poll.PollTags.Add(new PollTag { Tag = tag });
-            }
+            await ApplyTagsAsync(context, poll, NormalizeTagNames(request.Tags));
         }
 
         await context.SaveChangesAsync();
