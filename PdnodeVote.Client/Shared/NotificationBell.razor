@@ -599,19 +599,35 @@
     private string? _userId;
     private NotificationDto? _selectedNotification;
     private bool _initialized;
+    private System.Threading.Timer? _retryTimer;
 
     protected override async Task OnInitializedAsync()
     {
-        await CheckAuthAndLoadAsync();
+        // Loading twice (here and in OnAfterRenderAsync) issued every notification request twice, so
+        // the initial load lives only in OnAfterRenderAsync, which runs on the interactive renderer.
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        if (firstRender)
+        if (!firstRender) return;
+
+        await CheckAuthAndLoadAsync();
+
+        // Retry the hub connection if the first attempt failed (typically because it ran during
+        // server-side prerender). Throttled so a persistent failure cannot spin.
+        if (!_initialized)
         {
-            await CheckAuthAndLoadAsync();
-            StateHasChanged();
+            _retryTimer ??= new System.Threading.Timer(_ =>
+            {
+                _ = InvokeAsync(async () =>
+                {
+                    await CheckAuthAndLoadAsync();
+                    StateHasChanged();
+                });
+            }, null, TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(15));
         }
+
+        StateHasChanged();
     }
 
     private async Task CheckAuthAndLoadAsync()
@@ -630,8 +646,12 @@
 
                 if (!_initialized && !string.IsNullOrEmpty(_userId))
                 {
-                    _initialized = true;
-                    await SetupSignalRAsync();
+                    // Only mark initialised once the hub is actually connected. This runs during
+                    // server-side prerender too, where [Authorize] on the hub means StartAsync cannot
+                    // succeed; flagging success there (as the previous code did) permanently suppressed
+                    // the retry, so push notifications never arrived and the bell only updated when the
+                    // user opened it and triggered an HTTP refresh.
+                    _initialized = await SetupSignalRAsync();
                 }
             }
         }
@@ -685,10 +705,22 @@
         }
     }
 
-    private async Task SetupSignalRAsync()
+    /// <summary>
+    /// Connects the hub and subscribes to this user's notification group.
+    /// </summary>
+    /// <returns>
+    /// True only when the connection started and the group join succeeded; false lets the caller retry
+    /// on a later render (see CheckAuthAndLoadAsync).
+    /// </returns>
+    private async Task<bool> SetupSignalRAsync()
     {
         try
         {
+            if (_hubConnection is not null)
+            {
+                return true;
+            }
+
             var hubUrl = Navigation.ToAbsoluteUri("/hubs/poll");
             _hubConnection = new HubConnectionBuilder()
                 .WithUrl(hubUrl)
@@ -726,10 +758,21 @@
 
             // The server derives the group from the authenticated identity, so no id is sent.
             await _hubConnection.SendAsync("JoinUserGroup");
+            return true;
         }
-        catch
+        catch (Exception ex)
         {
-            // Silently ignore if SignalR hub cannot be connected
+            // Not fatal: prerender (or a hub outage) lands here, and returning false makes the caller
+            // retry later instead of silently giving up on real-time notifications forever.
+            Console.WriteLine($"[NotificationBell] SignalR setup failed, will retry: {ex.Message}");
+
+            if (_hubConnection is not null)
+            {
+                await _hubConnection.DisposeAsync();
+                _hubConnection = null;
+            }
+
+            return false;
         }
     }
 
@@ -846,6 +889,9 @@
 
     public async ValueTask DisposeAsync()
     {
+        _retryTimer?.Dispose();
+        _retryTimer = null;
+
         if (_hubConnection != null)
         {
             try

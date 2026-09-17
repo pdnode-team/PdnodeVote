@@ -12,8 +12,13 @@ builder.Services.AddMudServices();
 
 // Antiforgery is opted into server-side by the state-changing API endpoints (minimal APIs get no
 // validation from UseAntiforgery() alone). This client half fetches the token and attaches it.
-builder.Services.AddScoped<IAntiforgeryTokenProvider>(sp =>
-    new AntiforgeryTokenProvider(sp.GetRequiredService<HttpClient>()));
+//
+// The token fetch uses its own bare HttpClient rather than the shared one. The shared instance's
+// handler chain contains AntiforgeryHeaderHandler, which depends on this provider, so letting the
+// provider resolve HttpClient would close a construction cycle (HttpClient -> provider -> HttpClient)
+// and risk the request synchronously waiting on itself.
+builder.Services.AddScoped<IAntiforgeryTokenProvider>(_ => new AntiforgeryTokenProvider(
+    new HttpClient { BaseAddress = new Uri(builder.HostEnvironment.BaseAddress) }));
 
 builder.Services.AddScoped(sp =>
 {

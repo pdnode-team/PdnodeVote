@@ -1,0 +1,26 @@
+# 构建产物
+bin/
+obj/
+publish/
+
+# 本地开发数据库（含种子管理员记录，绝不进镜像）
+Data/*.db
+Data/*.db-shm
+Data/*.db-wal
+
+# 打包产物
+*.zip
+
+# VCS / IDE
+.git/
+.gitignore
+.vscode/
+*.user
+
+# 文档与测试（运行镜像不需要）
+TODO-BUGS.md
+tests/
+
+# OS
+Thumbs.db
+.DS_Store
