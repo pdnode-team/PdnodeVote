@@ -1,0 +1,22 @@
+@inject ISnackbar Snackbar
+@implements IDisposable
+
+<MudPopoverProvider />
+<MudDialogProvider />
+<MudSnackbarProvider />
+
+@code {
+    protected override void OnInitialized()
+    {
+        Snackbar.Configuration.PreventDuplicates = true;
+        Snackbar.Configuration.NewestOnTop = true;
+        Snackbar.Configuration.ShowCloseIcon = true;
+        Snackbar.Configuration.VisibleStateDuration = 4000;
+        Snackbar.Configuration.MaxDisplayedSnackbars = 3;
+    }
+
+    public void Dispose()
+    {
+        Snackbar.Clear();
+    }
+}

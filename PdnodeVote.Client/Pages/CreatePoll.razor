@@ -1,0 +1,566 @@
+@page "/create-poll"
+@rendermode InteractiveAuto
+@attribute [Authorize]
+@using PdnodeVote.Client.Models
+@inject IPollApiClient PollApi
+@inject NavigationManager NavigationManager
+@inject ISnackbar Snackbar
+
+<PageTitle>Create Poll - Pdnode Vote</PageTitle>
+
+<InteractiveMudProviders />
+
+
+<MudContainer MaxWidth="MaxWidth.Medium" Class="my-6">
+    <MudBreadcrumbs Items="_breadcrumbs" Class="px-0 mb-4" />
+
+    <div class="pa-5 pa-md-7 rounded-xl" style="background-color: #1e242d; border: 1px solid rgba(255, 255, 255, 0.08); box-shadow: 0 16px 40px -12px rgba(0, 0, 0, 0.6);">
+        <div class="mb-6">
+            <h1 style="font-size: 24px; font-weight: 700; color: #f8fafc; letter-spacing: -0.025em; margin: 0 0 4px 0;">
+                Create New Poll
+            </h1>
+            <div style="font-size: 14px; color: #94a3b8;">
+                Configure your question, answer choices, and audience rules
+            </div>
+        </div>
+
+        <MudForm @ref="_form" @bind-IsValid="@_isFormValid">
+            <!-- Basic Info -->
+            <div class="mb-5">
+                <span style="font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: #10b981; display: block; margin-bottom: 8px;">
+                    1. Topic, Category & Tags
+                </span>
+                
+                <MudTextField @bind-Value="_title"
+                              Label="Poll Title"
+                              Placeholder="e.g. Which web framework should we adopt in 2026?"
+                              Variant="Variant.Outlined"
+                              Required="true"
+                              RequiredError="Poll title is required"
+                              MaxLength="100"
+                              Counter="100"
+                              Class="mb-4" />
+
+                <!-- Category Selection -->
+                <div class="mb-4">
+                    <MudSelect T="int?" @bind-Value="_categoryId"
+                               Label="Board / Category"
+                               Variant="Variant.Outlined"
+                               AnchorOrigin="Origin.BottomCenter"
+                               Clearable="true"
+                               Placeholder="Select a board (Optional, defaults to General)">
+                        @foreach (var cat in _flattenedCategories)
+                        {
+                            var prefix = cat.Depth > 0 ? new string('\u00A0', cat.Depth * 3) + "↳ " : "";
+                            var permLabel = cat.PostPermission switch
+                            {
+                                2 => " [Admin Only]",
+                                1 => " [Moderator Only]",
+                                _ => ""
+                            };
+                            <MudSelectItem Value="@((int?)cat.Id)">
+                                <span style="opacity: 0.6;">@prefix</span>
+                                <span style="font-weight: @(cat.Depth == 0 ? "700" : "400");">@cat.Name</span>
+                                @if (!string.IsNullOrEmpty(permLabel))
+                                {
+                                    <span style="font-size: 11px; color: #f59e0b; margin-left: 6px;">@permLabel</span>
+                                }
+                            </MudSelectItem>
+                        }
+                    </MudSelect>
+                    @if (SelectedCategory != null && !string.IsNullOrEmpty(SelectedCategory.Description))
+                    {
+                        <div style="font-size: 12px; color: #94a3b8; margin-top: 4px; padding-left: 4px;">
+                            <MudIcon Icon="@Icons.Material.Filled.Info" Size="Size.Small" Style="font-size: 14px; vertical-align: text-bottom; margin-right: 4px;" />
+                            @SelectedCategory.Description
+                        </div>
+                    }
+                </div>
+
+                <!-- Tags Input -->
+                <div class="mb-4 pa-3 rounded-lg" style="background-color: #161a1f; border: 1px solid rgba(255, 255, 255, 0.06);">
+                    <div style="font-size: 13px; font-weight: 600; color: #f8fafc; margin-bottom: 6px;">
+                        Tags (Up to 5)
+                    </div>
+                    <div class="d-flex align-center gap-2 mb-2">
+                        <MudTextField @bind-Value="_tagInput"
+                                      Placeholder="Type a tag and press Enter"
+                                      Variant="Variant.Outlined"
+                                      Margin="Margin.Dense"
+                                      OnKeyDown="@HandleTagKeyDown"
+                                      Class="flex-grow-1" />
+                        <MudButton Variant="Variant.Filled"
+                                   Color="Color.Primary"
+                                   Size="Size.Small"
+                                   OnClick="AddTag"
+                                   Disabled="@(string.IsNullOrWhiteSpace(_tagInput) || _tags.Count >= 5)"
+                                   Style="text-transform: none;">
+                            Add
+                        </MudButton>
+                    </div>
+
+                    @if (_tags.Count > 0)
+                    {
+                        <div class="d-flex flex-wrap gap-1 mb-2">
+                            @foreach (var tag in _tags)
+                            {
+                                <MudChip T="string"
+                                         Color="Color.Primary"
+                                         Variant="Variant.Outlined"
+                                         Size="Size.Small"
+                                         OnClose="@(() => RemoveTag(tag))"
+                                         CloseIcon="@Icons.Material.Filled.Close">
+                                    #@tag
+                                </MudChip>
+                            }
+                        </div>
+                    }
+
+                    @if (_popularTags.Count > 0)
+                    {
+                        <div class="d-flex align-center flex-wrap gap-1 mt-2">
+                            <span style="font-size: 11px; color: #64748b; margin-right: 4px;">Popular:</span>
+                            @foreach (var popTag in _popularTags.Take(6))
+                            {
+                                if (!_tags.Contains(popTag.Name, StringComparer.OrdinalIgnoreCase))
+                                {
+                                    <span @onclick="@(() => QuickAddTag(popTag.Name))"
+                                          style="font-size: 11px; color: #38bdf8; background: rgba(56, 189, 248, 0.1); padding: 2px 8px; border-radius: 9999px; cursor: pointer; transition: all 0.2s;">
+                                        #@popTag.Name
+                                    </span>
+                                }
+                            }
+                        </div>
+                    }
+                </div>
+
+                <MudTextField @bind-Value="_description"
+                              Label="Description (Optional)"
+                              Placeholder="Provide background information or notes for voters..."
+                              Variant="Variant.Outlined"
+                              Lines="3"
+                              MaxLength="500"
+                              Counter="500" />
+            </div>
+
+            <div style="height: 1px; background-color: rgba(255, 255, 255, 0.06); margin: 24px 0;"></div>
+
+            <!-- Rules & Permissions -->
+            <div class="mb-5">
+                <span style="font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: #10b981; display: block; margin-bottom: 12px;">
+                    2. Voting Rules
+                </span>
+
+                <div class="d-flex flex-column gap-3">
+                    <div class="pa-4 rounded-lg" style="background-color: #161a1f; border: 1px solid rgba(255, 255, 255, 0.06);">
+                        <MudSwitch @bind-Value="_requireLogin" Color="Color.Primary" Label="Require voters to be logged in" />
+                        <div style="font-size: 12px; color: #64748b; margin-top: 4px;">
+                            @(_requireLogin
+                                ? "Strict mode: Voters must register and log in (enforcing one vote per account)."
+                                : "Public mode: Guests can vote directly (protected by real client IP deduplication).")
+                        </div>
+                    </div>
+
+                    <div class="pa-4 rounded-lg" style="background-color: #161a1f; border: 1px solid rgba(255, 255, 255, 0.06);">
+                        <MudSwitch @bind-Value="_isMultipleChoice" Color="Color.Primary" Label="Allow Multiple Choices" />
+                        @if (_isMultipleChoice)
+                        {
+                            <div class="mt-3" style="max-width: 240px;">
+                                <MudNumericField @bind-Value="_maxChoices"
+                                                 Label="Max choices per voter"
+                                                 Variant="Variant.Outlined"
+                                                 Min="2"
+                                                 Max="@Math.Max(2, _options.Count)"
+                                                 Margin="Margin.Dense" />
+                            </div>
+                        }
+                    </div>
+
+                    <div class="pa-4 rounded-lg" style="background-color: #161a1f; border: 1px solid rgba(255, 255, 255, 0.06);">
+                        <div style="font-size: 13px; font-weight: 600; color: #f8fafc; margin-bottom: 6px;">Result Visibility</div>
+                        <MudRadioGroup @bind-Value="_resultVisibility">
+                            <MudRadio Value="ResultVisibility.AlwaysPublic" Color="Color.Primary">
+                                <span style="font-size: 13px; color: #f8fafc; font-weight: 500;">Always Public</span>
+                                <span style="display: block; font-size: 12px; color: #64748b;">Results are visible at any time.</span>
+                            </MudRadio>
+                            <MudRadio Value="ResultVisibility.AfterVoting" Color="Color.Primary" Class="mt-2">
+                                <span style="font-size: 13px; color: #f8fafc; font-weight: 500;">Hidden Until Voted</span>
+                                <span style="display: block; font-size: 12px; color: #64748b;">Prevents the bandwagon effect; results unlock after voting.</span>
+                            </MudRadio>
+                        </MudRadioGroup>
+                    </div>
+
+                    <div class="pa-4 rounded-lg" style="background-color: #161a1f; border: 1px solid rgba(255, 255, 255, 0.06);">
+                        <MudSwitch @bind-Value="_hasExpiry" Color="Color.Primary" Label="Set Expiration Deadline" />
+                        @if (_hasExpiry)
+                        {
+                            <div class="d-flex flex-wrap gap-4 mt-3">
+                                <MudDatePicker Label="Expiration Date" @bind-Date="_expireDate" MinDate="DateTime.Today" Variant="Variant.Outlined" Margin="Margin.Dense" />
+                                <MudTimePicker Label="Expiration Time" @bind-Time="_expireTime" Variant="Variant.Outlined" Margin="Margin.Dense" />
+                            </div>
+                        }
+                    </div>
+                </div>
+            </div>
+
+            <div style="height: 1px; background-color: rgba(255, 255, 255, 0.06); margin: 24px 0;"></div>
+
+            <!-- Options -->
+            <div class="mb-5">
+                <div class="d-flex align-center justify-space-between mb-3">
+                    <span style="font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: #10b981;">
+                        3. Poll Choices (At least 2)
+                    </span>
+                    <MudButton StartIcon="@Icons.Material.Filled.Add"
+                               Variant="Variant.Text"
+                               Color="Color.Primary"
+                               Size="Size.Small"
+                               OnClick="AddOption"
+                               Disabled="@(_options.Count >= 20)"
+                               Style="text-transform: none; font-weight: 600;">
+                        Add Choice
+                    </MudButton>
+                </div>
+
+                @for (int i = 0; i < _options.Count; i++)
+                {
+                    var index = i;
+                    var opt = _options[index];
+                    <div class="d-flex flex-column gap-1 mb-3 pa-2 rounded-lg" style="background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.04);">
+                        <div class="d-flex align-center gap-2">
+                            <span style="width: 24px; font-size: 13px; font-weight: 600; color: #64748b; text-align: center;">
+                                @(index + 1)
+                            </span>
+
+                            @if (!string.IsNullOrEmpty(opt.ImageUrl))
+                            {
+                                <div class="position-relative" style="width: 38px; height: 38px; border-radius: 6px; overflow: hidden; border: 1px solid rgba(255,255,255,0.15); flex-shrink: 0;">
+                                    <img src="@opt.ImageUrl" style="width: 100%; height: 100%; object-fit: cover;" alt="Option thumb" />
+                                    <button type="button" @onclick="@(() => opt.ImageUrl = null)"
+                                            style="position: absolute; top: 0; right: 0; background: rgba(0,0,0,0.7); color: #fff; border: none; font-size: 10px; width: 14px; height: 14px; line-height: 14px; cursor: pointer; padding: 0;" title="Remove image">×</button>
+                                </div>
+                            }
+
+                            <MudTextField @bind-Value="opt.Text"
+                                          Placeholder="@($"Choice {index + 1}")"
+                                          Variant="Variant.Outlined"
+                                          Margin="Margin.Dense"
+                                          Required="true"
+                                          RequiredError="Choice text cannot be empty"
+                                          Class="flex-grow-1" />
+
+                            <label class="mud-button-root mud-icon-button mud-icon-button-size-small mud-default-text"
+                                   style="cursor: pointer; padding: 6px;"
+                                   title="Attach Image">
+                                <MudIcon Icon="@Icons.Material.Filled.AddPhotoAlternate" Size="Size.Small" Style="color: #94a3b8;" />
+                                <InputFile OnChange="@((e) => HandleFileUpload(e, opt))" style="display: none;" accept="image/png,image/jpeg,image/webp,image/gif" />
+                            </label>
+
+                            <MudIconButton Icon="@(opt.ShowImageUrlInput ? Icons.Material.Filled.LinkOff : Icons.Material.Filled.Link)"
+                                           Size="Size.Small"
+                                           Color="Color.Default"
+                                           OnClick="@(() => opt.ShowImageUrlInput = !opt.ShowImageUrlInput)"
+                                           aria-label="Paste Image URL"
+                                           Style="color: #94a3b8;" />
+
+                            <MudIconButton Icon="@Icons.Material.Filled.DeleteOutline"
+                                           Color="Color.Error"
+                                           Size="Size.Small"
+                                           OnClick="@(() => RemoveOption(index))"
+                                           Disabled="@(_options.Count <= 2)"
+                                           aria-label="Delete this choice" />
+                        </div>
+
+                        @if (opt.IsUploading)
+                        {
+                            <div class="d-flex align-center gap-2 ps-8">
+                                <MudProgressCircular Size="Size.Small" Indeterminate="true" />
+                                <span style="font-size: 12px; color: #38bdf8;">Uploading image...</span>
+                            </div>
+                        }
+
+                        @if (opt.ShowImageUrlInput)
+                        {
+                            <div class="d-flex align-center gap-2 ps-8 mt-1">
+                                <MudTextField @bind-Value="opt.ImageUrl"
+                                              Placeholder="https://example.com/image.png"
+                                              Variant="Variant.Outlined"
+                                              Margin="Margin.Dense"
+                                              Label="Image URL"
+                                              Class="flex-grow-1" />
+                            </div>
+                        }
+                    </div>
+                }
+            </div>
+
+            <div class="d-flex justify-end gap-3 mt-6 pt-3" style="border-top: 1px solid rgba(255,255,255,0.06);">
+                <MudButton Variant="Variant.Outlined" Color="Color.Default" Href="/" Style="text-transform: none; border-color: rgba(255,255,255,0.12); color: #cbd5e1; border-radius: 8px;">
+                    Cancel
+                </MudButton>
+                <MudButton Variant="Variant.Filled"
+                           Color="Color.Primary"
+                           StartIcon="@Icons.Material.Filled.Check"
+                           OnClick="SubmitPollAsync"
+                           Disabled="_isSubmitting"
+                           Size="Size.Medium"
+                           Style="text-transform: none; font-weight: 600; padding: 8px 24px; border-radius: 8px;">
+                    @if (_isSubmitting)
+                    {
+                        <MudProgressCircular Class="ms-n1" Size="Size.Small" Indeterminate="true" />
+                        <span class="ms-2">Publishing...</span>
+                    }
+                    else
+                    {
+                        <span>Publish Poll</span>
+                    }
+                </MudButton>
+            </div>
+        </MudForm>
+    </div>
+</MudContainer>
+
+@code {
+    private MudForm? _form;
+    private bool _isFormValid;
+    private bool _isSubmitting = false;
+
+    private string _title = "";
+    private string? _description;
+    private bool _requireLogin = false;
+    private bool _isMultipleChoice = false;
+    private int _maxChoices = 2;
+    private ResultVisibility _resultVisibility = ResultVisibility.AlwaysPublic;
+
+    private int? _categoryId;
+    private List<CategoryDto> _categories = new();
+    private List<CategoryDto> _flattenedCategories = new();
+    private CategoryDto? SelectedCategory => _flattenedCategories.FirstOrDefault(c => c.Id == _categoryId);
+
+    private List<string> _tags = new();
+    private string _tagInput = "";
+    private List<TagDto> _popularTags = new();
+
+    private bool _hasExpiry = false;
+    private DateTime? _expireDate = DateTime.Today.AddDays(7);
+    private TimeSpan? _expireTime = new TimeSpan(23, 59, 0);
+
+    private class OptionItemModel
+    {
+        public string Text { get; set; } = "";
+        public string? ImageUrl { get; set; }
+        public bool ShowImageUrlInput { get; set; }
+        public bool IsUploading { get; set; }
+    }
+
+    private List<OptionItemModel> _options = new() { new(), new() };
+
+    private List<BreadcrumbItem> _breadcrumbs = new()
+    {
+        new BreadcrumbItem("Home", href: "/"),
+        new BreadcrumbItem("Create Poll", href: null, disabled: true)
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            var catTask = PollApi.GetCategoriesAsync();
+            var tagTask = PollApi.GetPopularTagsAsync();
+            await Task.WhenAll(catTask, tagTask);
+
+            _categories = await catTask;
+            _popularTags = await tagTask;
+
+            FlattenCategories(_categories);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error loading categories/tags: {ex.Message}");
+        }
+    }
+
+    private void FlattenCategories(IEnumerable<CategoryDto> list)
+    {
+        _flattenedCategories.Clear();
+        void Traverse(IEnumerable<CategoryDto> items)
+        {
+            foreach (var item in items)
+            {
+                _flattenedCategories.Add(item);
+                if (item.Children.Count > 0)
+                {
+                    Traverse(item.Children);
+                }
+            }
+        }
+        Traverse(list);
+    }
+
+    private void AddTag()
+    {
+        if (string.IsNullOrWhiteSpace(_tagInput)) return;
+        var tag = _tagInput.Trim().TrimStart('#');
+        if (tag.Length > 30) tag = tag.Substring(0, 30);
+
+        if (!_tags.Contains(tag, StringComparer.OrdinalIgnoreCase) && _tags.Count < 5)
+        {
+            _tags.Add(tag);
+        }
+        _tagInput = "";
+    }
+
+    private void QuickAddTag(string tagName)
+    {
+        if (!_tags.Contains(tagName, StringComparer.OrdinalIgnoreCase) && _tags.Count < 5)
+        {
+            _tags.Add(tagName);
+        }
+    }
+
+    private void RemoveTag(string tag)
+    {
+        _tags.Remove(tag);
+    }
+
+    private void HandleTagKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" || e.Key == "," || e.Key == " ")
+        {
+            AddTag();
+        }
+    }
+
+    private void AddOption()
+    {
+        if (_options.Count < 20)
+        {
+            _options.Add(new OptionItemModel());
+        }
+    }
+
+    private void RemoveOption(int index)
+    {
+        if (_options.Count > 2)
+        {
+            _options.RemoveAt(index);
+        }
+    }
+
+    private async Task HandleFileUpload(InputFileChangeEventArgs e, OptionItemModel opt)
+    {
+        var file = e.File;
+        if (file == null) return;
+
+        if (file.Size > 5 * 1024 * 1024)
+        {
+            Snackbar.Add("File exceeds 5MB limit.", Severity.Warning);
+            return;
+        }
+
+        opt.IsUploading = true;
+        try
+        {
+            using var stream = file.OpenReadStream(5 * 1024 * 1024);
+            var imageUrl = await PollApi.UploadImageAsync(stream, file.Name);
+            if (!string.IsNullOrEmpty(imageUrl))
+            {
+                opt.ImageUrl = imageUrl;
+                opt.ShowImageUrlInput = false;
+                Snackbar.Add("Image attached successfully.", Severity.Success);
+            }
+            else
+            {
+                Snackbar.Add("Failed to upload image.", Severity.Error);
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Upload error: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            opt.IsUploading = false;
+        }
+    }
+
+    private async Task SubmitPollAsync()
+    {
+        if (_form != null)
+        {
+            await _form.ValidateAsync();
+            if (!_isFormValid)
+            {
+                Snackbar.Add("Please fill in all required fields.", Severity.Warning);
+                return;
+            }
+        }
+
+        var validOptionModels = _options.Where(o => !string.IsNullOrWhiteSpace(o.Text)).ToList();
+        if (validOptionModels.Count < 2)
+        {
+            Snackbar.Add("At least 2 valid options are required.", Severity.Warning);
+            return;
+        }
+
+        _isSubmitting = true;
+        try
+        {
+            DateTime? expiresAtUtc = null;
+            if (_hasExpiry && _expireDate.HasValue)
+            {
+                var combined = _expireDate.Value.Date;
+                if (_expireTime.HasValue)
+                {
+                    combined = combined.Add(_expireTime.Value);
+                }
+                expiresAtUtc = combined.ToUniversalTime();
+
+                if (expiresAtUtc <= DateTime.UtcNow)
+                {
+                    Snackbar.Add("Expiration time must be in the future.", Severity.Warning);
+                    return;
+                }
+            }
+
+            var req = new CreatePollRequest
+            {
+                Title = _title,
+                Description = _description,
+                CategoryId = _categoryId,
+                Tags = _tags,
+                Options = validOptionModels.Select(o => o.Text.Trim()).ToList(),
+                OptionItems = validOptionModels.Select(o => new PollOptionInputDto
+                {
+                    Text = o.Text.Trim(),
+                    ImageUrl = o.ImageUrl
+                }).ToList(),
+                RequireLogin = _requireLogin,
+                IsMultipleChoice = _isMultipleChoice,
+                MaxChoices = _isMultipleChoice ? _maxChoices : 1,
+                ResultVisibility = _resultVisibility,
+                ExpiresAt = expiresAtUtc
+            };
+
+            var result = await PollApi.CreatePollAsync(req);
+
+            if (result.Success)
+            {
+                Snackbar.Add(result.Message, Severity.Success);
+                NavigationManager.NavigateTo($"/poll/{result.PollId}");
+            }
+            else
+            {
+                Snackbar.Add(result.Message, Severity.Error);
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Failed to publish: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isSubmitting = false;
+        }
+    }
+}

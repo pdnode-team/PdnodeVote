@@ -1,0 +1,1720 @@
+@page "/admin"
+@rendermode InteractiveAuto
+@attribute [Authorize]
+@inject AuthenticationStateProvider AuthStateProvider
+@inject IAdminApiClient AdminApi
+@inject IPollApiClient PollApi
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@inject NavigationManager NavigationManager
+
+<PageTitle>Admin & Moderation Portal - Pdnode Vote</PageTitle>
+
+<InteractiveMudProviders />
+
+
+@if (_isCheckingAuth)
+{
+    <div class="d-flex justify-center my-12">
+        <MudProgressCircular Color="Color.Primary" Indeterminate="true" Size="Size.Large" />
+    </div>
+}
+else if (!_canAccess)
+{
+    <MudContainer MaxWidth="MaxWidth.Small" Class="my-12">
+        <MudAlert Severity="Severity.Error" Variant="Variant.Filled" Class="rounded-lg">
+            Access Denied. You must be an Administrator or Moderator to view this page.
+        </MudAlert>
+        <div class="mt-4 text-center">
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" Href="/">Back to Home</MudButton>
+        </div>
+    </MudContainer>
+}
+else
+{
+    <MudContainer MaxWidth="MaxWidth.Large" Class="my-6">
+        <!-- Header -->
+        <div class="d-flex flex-column flex-sm-row justify-space-between align-sm-center gap-3 mb-6">
+            <div>
+                <h1 style="font-size: 24px; font-weight: 700; color: #f8fafc; letter-spacing: -0.025em; margin: 0 0 4px 0;">
+                    @(_isAdmin ? "Administration & Moderation" : "Moderator Review Queue")
+                </h1>
+                <div style="font-size: 14px; color: #94a3b8;">
+                    Manage community submissions, audit discussions, and enforce platform guidelines
+                </div>
+            </div>
+            <div>
+                <span class="status-pill @(_isAdmin ? "active" : "pinned")" style="font-size: 12px; padding: 4px 12px;">
+                    Role: @(_isAdmin ? "Administrator" : (_isSuperModerator ? "Super Moderator" : "Moderator"))
+                </span>
+            </div>
+        </div>
+
+        <!-- Dashboard Stats for Admin -->
+        @if (_isAdmin && _stats != null)
+        {
+            <MudGrid Class="mb-6" Spacing="3">
+                <MudItem xs="6" md="3">
+                    <div class="pa-4 rounded-xl" style="background-color: #1e242d; border: 1px solid rgba(255, 255, 255, 0.08);">
+                        <div style="font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: #64748b; margin-bottom: 4px;">
+                            Total Users
+                        </div>
+                        <div style="font-size: 26px; font-weight: 700; color: #f8fafc; letter-spacing: -0.025em;">
+                            @_stats.TotalUsers
+                        </div>
+                    </div>
+                </MudItem>
+                <MudItem xs="6" md="3">
+                    <div class="pa-4 rounded-xl" style="background-color: #1e242d; border: 1px solid rgba(255, 255, 255, 0.08);">
+                        <div style="font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: #64748b; margin-bottom: 4px;">
+                            Total Polls
+                        </div>
+                        <div style="font-size: 26px; font-weight: 700; color: #f8fafc; letter-spacing: -0.025em;">
+                            @_stats.TotalPolls
+                        </div>
+                    </div>
+                </MudItem>
+                <MudItem xs="6" md="3">
+                    <div class="pa-4 rounded-xl" style="background-color: #1e242d; border: 1px solid rgba(255, 255, 255, 0.08);">
+                        <div style="font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: #64748b; margin-bottom: 4px;">
+                            Pending Review
+                        </div>
+                        <div style="font-size: 26px; font-weight: 700; color: #fbbf24; letter-spacing: -0.025em;">
+                            @_stats.PendingReviewCount
+                        </div>
+                    </div>
+                </MudItem>
+                <MudItem xs="6" md="3">
+                    <div class="pa-4 rounded-xl" style="background-color: #1e242d; border: 1px solid rgba(255, 255, 255, 0.08);">
+                        <div style="font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: #64748b; margin-bottom: 4px;">
+                            Suspended Users
+                        </div>
+                        <div style="font-size: 26px; font-weight: 700; color: #f87171; letter-spacing: -0.025em;">
+                            @_stats.BannedUsersCount
+                        </div>
+                    </div>
+                </MudItem>
+            </MudGrid>
+        }
+
+        <!-- Dynamic Tabs -->
+        <MudTabs Elevation="2" Rounded="true" ApplyEffectsToContainer="true" Color="Color.Dark" Class="rounded-lg">
+            <!-- TAB 1: Review Queue (Admin & Moderator) -->
+            <MudTabPanel Text="@($"Review Queue ({_pendingPolls.Count})")" Icon="@Icons.Material.Filled.PendingActions">
+                <MudPaper Class="pa-4" Elevation="0" Style="background-color: transparent;">
+                    <div class="d-flex justify-space-between align-center mb-4">
+                        <MudText Typo="Typo.h6" Class="font-weight-bold">Submissions Pending Verification</MudText>
+                        <MudButton Variant="Variant.Outlined" Color="Color.Primary" Size="Size.Small" StartIcon="@Icons.Material.Filled.Refresh" OnClick="LoadPendingPollsAsync">
+                            Refresh
+                        </MudButton>
+                    </div>
+
+                    @if (_pendingPolls.Count == 0)
+                    {
+                        <MudAlert Severity="Severity.Success" Variant="Variant.Outlined" Class="my-4 rounded-lg">
+                            Queue is clean! All submitted polls have been reviewed.
+                        </MudAlert>
+                    }
+                    else
+                    {
+                        <div class="d-flex flex-column gap-3">
+                            @foreach (var p in _pendingPolls)
+                            {
+                                <div class="poll-feed-card" style="cursor: default;">
+                                    <div class="d-flex align-center flex-wrap gap-2 mb-2">
+                                        <span class="status-pill" style="background-color: rgba(245, 158, 11, 0.12); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.25);">
+                                            Pending Review
+                                        </span>
+                                        <span class="status-pill pinned" style="font-size: 11px;">
+                                            @p.GatingReason
+                                        </span>
+                                    </div>
+                                    <div class="poll-card-title" style="margin-bottom: 6px;">
+                                        @p.Title
+                                    </div>
+                                    <div class="d-flex flex-wrap gap-3 mt-1 mb-3" style="font-size: 12px; color: #64748b;">
+                                        <span>Author: <b style="color: #94a3b8;">@p.CreatorName</b> (@p.CreatorEmail)</span>
+                                        <span>·</span>
+                                        <span>Account: <b style="color: #94a3b8;">@Math.Round((DateTime.UtcNow - p.CreatorCreatedAt).TotalDays, 1)d old</b></span>
+                                        <span>·</span>
+                                        <span>Past Approved: <b style="color: #94a3b8;">@p.CreatorApprovedPollsCount</b></span>
+                                        <span>·</span>
+                                        <span>@p.CreatedAt.ToLocalTime().ToString("MMM dd, HH:mm")</span>
+                                    </div>
+                                    @if (!string.IsNullOrWhiteSpace(p.Description))
+                                    {
+                                        <div class="poll-card-desc mb-2">
+                                            @p.Description
+                                        </div>
+                                    }
+
+                                    <div class="d-flex flex-wrap gap-2 my-2">
+                                        @foreach (var opt in p.Options)
+                                        {
+                                            <span style="font-size: 12px; padding: 2px 8px; border-radius: 6px; background-color: #161a1f; border: 1px solid rgba(255,255,255,0.06); color: #cbd5e1;">
+                                                @opt
+                                            </span>
+                                        }
+                                    </div>
+
+                                    <div class="d-flex justify-end gap-2 pt-3 mt-2" style="border-top: 1px solid rgba(255,255,255,0.06);">
+                                         <MudButton Variant="Variant.Outlined" Color="Color.Error" Size="Size.Small" StartIcon="@Icons.Material.Filled.DeleteOutline" OnClick="@(() => OpenRemovePollDialog(p.Id, p.Title))" Disabled="_isBusy" Style="text-transform: none; border-radius: 6px; font-size: 12px;">
+                                             Remove
+                                         </MudButton>
+                                         <MudButton Variant="Variant.Outlined" Color="Color.Warning" Size="Size.Small" StartIcon="@Icons.Material.Filled.AssignmentReturn" OnClick="@(() => OpenReturnPollDialog(p.Id, p.Title))" Disabled="_isBusy" Style="text-transform: none; border-radius: 6px; font-size: 12px;">
+                                             Return
+                                         </MudButton>
+                                         <MudButton Variant="Variant.Filled" Color="Color.Success" Size="Size.Small" StartIcon="@(_approvingPollId == p.Id ? null : Icons.Material.Filled.Check)" OnClick="@(() => ApprovePollAsync(p.Id))" Disabled="_isBusy" Style="text-transform: none; border-radius: 6px; font-size: 12px; font-weight: 600;">
+                                             @if (_approvingPollId == p.Id)
+                                             {
+                                                 <MudProgressCircular Class="ms-n1" Size="Size.Small" Indeterminate="true" />
+                                                 <span class="ms-1">Approving...</span>
+                                             }
+                                             else
+                                             {
+                                                 <span>Approve & Publish</span>
+                                             }
+                                         </MudButton>
+                                     </div>
+                                </div>
+                            }
+                        </div>
+                    }
+                </MudPaper>
+            </MudTabPanel>
+
+            <!-- TAB 2: All Polls (Admin only) -->
+            @if (_isAdmin)
+            {
+                <MudTabPanel Text="All Polls" Icon="@Icons.Material.Filled.Poll">
+                    <MudPaper Class="pa-4" Elevation="0" Style="background-color: transparent;">
+                        <!-- Filters -->
+                        <MudGrid Class="align-center mb-4">
+                            <MudItem xs="12" md="6">
+                                <MudTextField @bind-Value="_allPollsSearch"
+                                              Placeholder="Search by title, description, or author..."
+                                              Adornment="Adornment.Start"
+                                              AdornmentIcon="@Icons.Material.Filled.Search"
+                                              Margin="Margin.Dense"
+                                              Variant="Variant.Outlined"
+                                              Clearable="true"
+                                              OnClearButtonClick="LoadAdminPollsAsync"
+                                              OnKeyUp="@(async e => { if (e.Key == "Enter") await LoadAdminPollsAsync(); })" />
+                            </MudItem>
+                            <MudItem xs="12" sm="6" md="4">
+                                <MudSelect T="PollStatus?" Value="_filterStatus" ValueChanged="OnPollStatusFilterChanged" Label="Status Filter" Margin="Margin.Dense" Variant="Variant.Outlined" Dense="true">
+                                    <MudSelectItem Value="@((PollStatus?)null)">All Statuses</MudSelectItem>
+                                    <MudSelectItem Value="@((PollStatus?)PollStatus.Approved)">Approved (Active)</MudSelectItem>
+                                    <MudSelectItem Value="@((PollStatus?)PollStatus.PendingReview)">Pending Review</MudSelectItem>
+                                    <MudSelectItem Value="@((PollStatus?)PollStatus.ReturnedForRevision)">Returned for Revision</MudSelectItem>
+                                    <MudSelectItem Value="@((PollStatus?)PollStatus.Removed)">Removed</MudSelectItem>
+                                    <MudSelectItem Value="@((PollStatus?)PollStatus.Archived)">Archived</MudSelectItem>
+                                </MudSelect>
+                            </MudItem>
+                            <MudItem xs="12" sm="6" md="2" Class="d-flex justify-end">
+                                <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="LoadAdminPollsAsync" Size="Size.Medium">
+                                    Filter
+                                </MudButton>
+                            </MudItem>
+                        </MudGrid>
+
+                        <MudTable Items="_adminPolls" Hover="true" Dense="true" Elevation="0" Class="rounded-xl" Style="background-color: #1e242d; border: 1px solid rgba(255, 255, 255, 0.08);">
+                            <HeaderContent>
+                                <MudTh>Title</MudTh>
+                                <MudTh>Author</MudTh>
+                                <MudTh>Status</MudTh>
+                                <MudTh>Pinned</MudTh>
+                                <MudTh>Votes</MudTh>
+                                <MudTh>Created</MudTh>
+                                <MudTh Style="text-align: right;">Actions</MudTh>
+                            </HeaderContent>
+                            <RowTemplate>
+                                <MudTd DataLabel="Title">
+                                    <a href="/poll/@context.Id" target="_blank" style="color: #f8fafc; font-weight: 600; text-decoration: none;">
+                                        @context.Title
+                                    </a>
+                                </MudTd>
+                                <MudTd DataLabel="Author">@context.CreatorName</MudTd>
+                                <MudTd DataLabel="Status">
+                                    @switch (context.Status)
+                                    {
+                                        case PollStatus.Approved:
+                                            <MudChip T="string" Color="Color.Success" Size="Size.Small" Variant="Variant.Filled">Approved</MudChip>
+                                            break;
+                                        case PollStatus.PendingReview:
+                                            <MudChip T="string" Color="Color.Warning" Size="Size.Small" Variant="Variant.Filled">Pending</MudChip>
+                                            break;
+                                        case PollStatus.ReturnedForRevision:
+                                            <MudChip T="string" Color="Color.Warning" Size="Size.Small" Variant="Variant.Outlined">Revision</MudChip>
+                                            break;
+                                        case PollStatus.Removed:
+                                            <MudChip T="string" Color="Color.Error" Size="Size.Small" Variant="Variant.Filled">Removed</MudChip>
+                                            break;
+                                        case PollStatus.Archived:
+                                            <MudChip T="string" Color="Color.Default" Size="Size.Small" Variant="Variant.Filled">Archived</MudChip>
+                                            break;
+                                    }
+                                </MudTd>
+                                <MudTd DataLabel="Pinned">
+                                    @if (context.IsPinned)
+                                    {
+                                        <MudChip T="string" Color="Color.Primary" Size="Size.Small" Icon="@Icons.Material.Filled.PushPin">Pinned</MudChip>
+                                    }
+                                    else
+                                    {
+                                        <span style="color: #64748b;">-</span>
+                                    }
+                                </MudTd>
+                                <MudTd DataLabel="Votes">@context.ParticipantCount</MudTd>
+                                <MudTd DataLabel="Created">@context.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd")</MudTd>
+                                <MudTd Style="text-align: right;">
+                                    <div class="d-flex justify-end gap-1">
+                                        <MudTooltip Text="@(context.IsPinned ? "Unpin" : "Pin to Top")">
+                                            <MudIconButton Icon="@(context.IsPinned ? Icons.Material.Filled.PushPin : Icons.Material.Outlined.PushPin)"
+                                                           Color="@(context.IsPinned ? Color.Primary : Color.Default)"
+                                                           Size="Size.Small"
+                                                           Disabled="_isBusy"
+                                                           OnClick="@(() => TogglePinAsync(context.Id))" />
+                                        </MudTooltip>
+
+                                        @if (context.Status != PollStatus.Archived)
+                                        {
+                                            <MudTooltip Text="Archive Poll">
+                                                <MudIconButton Icon="@Icons.Material.Filled.Archive"
+                                                               Color="Color.Warning"
+                                                               Size="Size.Small"
+                                                               Disabled="_isBusy"
+                                                               OnClick="@(() => ArchivePollAsync(context.Id))" />
+                                            </MudTooltip>
+                                        }
+
+                                        @if (context.Status != PollStatus.Removed)
+                                        {
+                                            <MudTooltip Text="Remove (Reddit-style)">
+                                                <MudIconButton Icon="@Icons.Material.Filled.Block"
+                                                               Color="Color.Error"
+                                                               Size="Size.Small"
+                                                               Disabled="_isBusy"
+                                                               OnClick="@(() => OpenRemovePollDialog(context.Id, context.Title))" />
+                                            </MudTooltip>
+                                        }
+
+                                        <MudTooltip Text="Return for Revision">
+                                            <MudIconButton Icon="@Icons.Material.Filled.AssignmentReturn"
+                                                           Color="Color.Info"
+                                                           Size="Size.Small"
+                                                           Disabled="_isBusy"
+                                                           OnClick="@(() => OpenReturnPollDialog(context.Id, context.Title))" />
+                                        </MudTooltip>
+                                    </div>
+                                </MudTd>
+                            </RowTemplate>
+                        </MudTable>
+                    </MudPaper>
+                </MudTabPanel>
+
+                <!-- TAB 3: User Management (Admin only) -->
+                <MudTabPanel Text="User Management" Icon="@Icons.Material.Filled.PeopleAlt">
+                    <MudPaper Class="pa-4" Elevation="0" Style="background-color: transparent;">
+                        <!-- Filters -->
+                        <MudGrid Class="align-center mb-4">
+                            <MudItem xs="12" sm="5">
+                                <MudTextField @bind-Value="_userSearch"
+                                              Placeholder="Search users by name or email..."
+                                              Adornment="Adornment.Start"
+                                              AdornmentIcon="@Icons.Material.Filled.Search"
+                                              Margin="Margin.Dense"
+                                              Variant="Variant.Outlined"
+                                              Clearable="true"
+                                              OnClearButtonClick="LoadUsersAsync"
+                                              OnKeyUp="@(async e => { if (e.Key == "Enter") await LoadUsersAsync(); })" />
+                            </MudItem>
+                            <MudItem xs="12" sm="4">
+                                <MudSelect T="string" Value="_roleFilter" ValueChanged="OnRoleFilterChanged" Label="Role Filter" Margin="Margin.Dense" Variant="Variant.Outlined" Dense="true">
+                                    <MudSelectItem Value="@("")">All Roles</MudSelectItem>
+                                    <MudSelectItem Value="@("Admin")">Admin</MudSelectItem>
+                                    <MudSelectItem Value="@("Moderator")">Moderator</MudSelectItem>
+                                </MudSelect>
+                            </MudItem>
+                            <MudItem xs="12" sm="3" Class="d-flex align-center">
+                                <MudCheckBox T="bool" Value="_bannedOnly" ValueChanged="OnBannedFilterChanged" Color="Color.Error" Label="Suspended Only" />
+                            </MudItem>
+                        </MudGrid>
+
+                        <!-- Bulk Action Toolbar -->
+                        @if (_selectedUserIds.Count > 0)
+                        {
+                            <MudPaper Class="pa-3 mb-4 rounded-lg d-flex justify-space-between align-center flex-wrap gap-2"
+                                      Elevation="3"
+                                      Style="background-color: #191e24; border: 1px solid #10b981;">
+                                <div class="d-flex align-center">
+                                    <MudIcon Icon="@Icons.Material.Filled.CheckCircle" Color="Color.Primary" Class="mr-2" />
+                                    <MudText Typo="Typo.subtitle2" Class="font-weight-bold" Style="color: #f8fafc;">
+                                        @_selectedUserIds.Count user(s) selected
+                                    </MudText>
+                                </div>
+                                <div class="d-flex gap-2">
+                                    <MudButton Variant="Variant.Filled" Color="Color.Error" Size="Size.Small" StartIcon="@Icons.Material.Filled.Gavel" OnClick="OpenBulkBanDialog">
+                                        Suspend Users
+                                    </MudButton>
+                                    <MudButton Variant="Variant.Outlined" Color="Color.Success" Size="Size.Small" StartIcon="@Icons.Material.Filled.Restore" OnClick="BulkUnbanUsersAsync">
+                                        Lift Suspension
+                                    </MudButton>
+                                    <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small" StartIcon="@Icons.Material.Filled.Mail" OnClick="OpenBulkEmailDialog">
+                                        Send Email
+                                    </MudButton>
+                                    <MudButton Variant="Variant.Text" Color="Color.Default" Size="Size.Small" OnClick="ClearUserSelection">
+                                        Deselect
+                                    </MudButton>
+                                </div>
+                            </MudPaper>
+                        }
+
+                        <!-- Users Table -->
+                        <MudTable Items="_users" Hover="true" Dense="true" Elevation="0" Class="rounded-xl" Style="background-color: #1e242d; border: 1px solid rgba(255, 255, 255, 0.08);">
+                            <HeaderContent>
+                                <MudTh Style="width: 48px;">
+                                    <MudCheckBox T="bool" Value="_isAllUsersSelected" ValueChanged="ToggleSelectAllUsers" Color="Color.Primary" />
+                                </MudTh>
+                                <MudTh>User</MudTh>
+                                <MudTh>Email</MudTh>
+                                <MudTh>Roles</MudTh>
+                                <MudTh>Status</MudTh>
+                                <MudTh>Registered</MudTh>
+                                <MudTh>Polls</MudTh>
+                                <MudTh Style="text-align: right;">Actions</MudTh>
+                            </HeaderContent>
+                            <RowTemplate>
+                                <MudTd>
+                                    <MudCheckBox T="bool"
+                                                 Value="@_selectedUserIds.Contains(context.Id)"
+                                                 ValueChanged="@(v => ToggleUserSelection(context.Id, v))"
+                                                 Color="Color.Primary" />
+                                </MudTd>
+                                <MudTd DataLabel="User">
+                                    <div class="d-flex align-center">
+                                        <MudAvatar Size="Size.Small" Color="Color.Primary" Class="mr-2">
+                                            @context.UserName.FirstOrDefault()
+                                        </MudAvatar>
+                                        <span style="font-weight: 600; color: #f8fafc;">@context.UserName</span>
+                                    </div>
+                                </MudTd>
+                                <MudTd DataLabel="Email">@context.Email</MudTd>
+                                <MudTd DataLabel="Roles">
+                                    <div class="d-flex gap-1">
+                                        @foreach (var r in context.Roles)
+                                        {
+                                            <MudChip T="string" Size="Size.Small" Color="@(r == "Admin" ? Color.Primary : (r == "Moderator" ? Color.Info : Color.Default))" Variant="Variant.Outlined">
+                                                @r
+                                            </MudChip>
+                                        }
+                                    </div>
+                                </MudTd>
+                                <MudTd DataLabel="Status">
+                                    @if (context.IsCurrentlyBanned)
+                                    {
+                                        <MudTooltip Text="@($"Reason: {context.BanReason ?? "Rules violation"}")">
+                                            <MudChip T="string" Color="Color.Error" Size="Size.Small" Variant="Variant.Filled">
+                                                @(context.IsPermanentlyBanned ? "Permanent Ban" : $"Banned ({Math.Max(1, (int)(context.BannedUntil!.Value - DateTime.UtcNow).TotalDays)}d)")
+                                            </MudChip>
+                                        </MudTooltip>
+                                    }
+                                    else
+                                    {
+                                        <MudChip T="string" Color="Color.Success" Size="Size.Small" Variant="Variant.Text">Active</MudChip>
+                                    }
+                                </MudTd>
+                                <MudTd DataLabel="Registered">@context.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd")</MudTd>
+                                <MudTd DataLabel="Polls">@context.ApprovedPollsCount / @context.TotalPollsCount</MudTd>
+                                <MudTd Style="text-align: right;">
+                                    <div class="d-flex justify-end gap-1">
+                                        <MudTooltip Text="Reset Password (Generates temp password & emails it)">
+                                            <MudIconButton Icon="@Icons.Material.Filled.LockReset"
+                                                           Color="Color.Warning"
+                                                           Size="Size.Small"
+                                                           Disabled="_isBusy"
+                                                           OnClick="@(() => ResetPasswordAsync(context.Id, context.UserName))" />
+                                        </MudTooltip>
+
+                                        @if (context.Roles.Contains("Moderator"))
+                                        {
+                                            <MudTooltip Text="Remove Moderator Role">
+                                                <MudIconButton Icon="@Icons.Material.Filled.RemoveModerator"
+                                                               Color="Color.Default"
+                                                               Size="Size.Small"
+                                                               Disabled="_isBusy"
+                                                               OnClick="@(() => ToggleUserRoleAsync(context.Id, "Moderator", false))" />
+                                            </MudTooltip>
+                                        }
+                                        else
+                                        {
+                                            <MudTooltip Text="Make Moderator">
+                                                <MudIconButton Icon="@Icons.Material.Filled.AddModerator"
+                                                               Color="Color.Info"
+                                                               Size="Size.Small"
+                                                               Disabled="_isBusy"
+                                                               OnClick="@(() => ToggleUserRoleAsync(context.Id, "Moderator", true))" />
+                                            </MudTooltip>
+                                        }
+
+                                        @if (context.IsCurrentlyBanned)
+                                        {
+                                            <MudTooltip Text="Lift Suspension">
+                                                <MudIconButton Icon="@Icons.Material.Filled.LockOpen"
+                                                               Color="Color.Success"
+                                                               Size="Size.Small"
+                                                               Disabled="_isBusy"
+                                                               OnClick="@(() => UnbanSingleUserAsync(context.Id))" />
+                                            </MudTooltip>
+                                        }
+                                        else if (context.Id == _currentUserId || SystemConstants.IsRootAdmin(context.Id))
+                                        {
+                                            <MudTooltip Text="@(context.Id == _currentUserId ? "Cannot suspend your own account" : "System administrator is protected")">
+                                                <MudIconButton Icon="@Icons.Material.Filled.Gavel"
+                                                               Color="Color.Default"
+                                                               Disabled="true"
+                                                               Size="Size.Small" />
+                                            </MudTooltip>
+                                        }
+                                        else
+                                        {
+                                            <MudTooltip Text="Suspend User">
+                                                <MudIconButton Icon="@Icons.Material.Filled.Gavel"
+                                                               Color="Color.Error"
+                                                               Size="Size.Small"
+                                                               OnClick="@(() => OpenSingleBanDialog(context.Id, context.UserName))" />
+                                            </MudTooltip>
+                                        }
+                                    </div>
+                                </MudTd>
+                            </RowTemplate>
+                        </MudTable>
+                    </MudPaper>
+                </MudTabPanel>
+            }
+
+            <!-- TAB: Category Requests (Admin & Moderator) -->
+            <MudTabPanel Text="@($"Board Requests ({_categoryRequests.Count})")" Icon="@Icons.Material.Filled.AccountTree">
+                <MudPaper Class="pa-4" Elevation="0" Style="background-color: transparent;">
+                    <div class="d-flex justify-space-between align-center mb-4">
+                        <div>
+                            <MudText Typo="Typo.h6" Class="font-weight-bold">Community Board Requests</MudText>
+                            <MudText Typo="Typo.caption" Color="Color.Secondary">
+                                Requires approval from at least 2 moderators or any administrator/super moderator to activate. Any rejection closes the request.
+                            </MudText>
+                        </div>
+                        <MudButton Variant="Variant.Outlined" Color="Color.Primary" Size="Size.Small" StartIcon="@Icons.Material.Filled.Refresh" OnClick="LoadCategoryRequestsAsync">
+                            Refresh
+                        </MudButton>
+                    </div>
+
+                    @if (_categoryRequests.Count == 0)
+                    {
+                        <MudAlert Severity="Severity.Success" Variant="Variant.Outlined" Class="my-4 rounded-lg">
+                            No pending board requests at this time.
+                        </MudAlert>
+                    }
+                    else
+                    {
+                        <MudTable Items="_categoryRequests" Hover="true" Breakpoint="Breakpoint.Sm" Elevation="0" Dense="true" Class="rounded-lg" Style="background-color: #1a2027; border: 1px solid rgba(255, 255, 255, 0.06);">
+                            <HeaderContent>
+                                <MudTh>Board Name</MudTh>
+                                <MudTh>Hierarchy / Parent</MudTh>
+                                <MudTh>Applicant</MudTh>
+                                <MudTh>Description &amp; Rationale</MudTh>
+                                <MudTh>Approvals</MudTh>
+                                <MudTh>Submitted At</MudTh>
+                                <MudTh Style="text-align: right;">Actions</MudTh>
+                            </HeaderContent>
+                            <RowTemplate>
+                                <MudTd DataLabel="Board Name">
+                                    <span style="font-weight: 700; color: #38bdf8;">@context.Name</span>
+                                </MudTd>
+                                <MudTd DataLabel="Parent Board">
+                                    @if (!string.IsNullOrEmpty(context.ParentName))
+                                    {
+                                        <span style="font-size: 12px; color: #94a3b8;">Sub-board (Parent: @context.ParentName)</span>
+                                    }
+                                    else
+                                    {
+                                        <span style="font-size: 12px; color: #10b981;">Main Board (Top Level)</span>
+                                    }
+                                </MudTd>
+                                <MudTd DataLabel="Applicant">@context.ApplicantName</MudTd>
+                                <MudTd DataLabel="Description">
+                                    <span style="font-size: 13px; color: #cbd5e1;">@context.Description</span>
+                                </MudTd>
+                                <MudTd DataLabel="Approvals">
+                                    <MudChip T="string" Color="@(context.ApprovalsCount >= 1 ? Color.Info : Color.Default)" Size="Size.Small">
+                                        @context.ApprovalsCount / 2 votes
+                                    </MudChip>
+                                </MudTd>
+                                <MudTd DataLabel="Submitted At">@context.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</MudTd>
+                                <MudTd Style="text-align: right;">
+                                    <div class="d-flex justify-end gap-1">
+                                        @if (context.HasReviewedByCurrentUser)
+                                        {
+                                            <span style="font-size: 12px; color: #64748b; margin-top: 4px;">Voted</span>
+                                        }
+                                        else
+                                        {
+                                            <MudButton Variant="Variant.Filled"
+                                                       Color="Color.Success"
+                                                       Size="Size.Small"
+                                                       StartIcon="@Icons.Material.Filled.Check"
+                                                       OnClick="@(() => ReviewCategoryRequestAsync(context.Id, true))"
+                                                       Disabled="_isBusy"
+                                                       Style="text-transform: none;">
+                                                Approve
+                                            </MudButton>
+                                            <MudButton Variant="Variant.Outlined"
+                                                       Color="Color.Error"
+                                                       Size="Size.Small"
+                                                       StartIcon="@Icons.Material.Filled.Close"
+                                                       OnClick="@(() => OpenRejectCategoryDialog(context.Id, context.Name))"
+                                                       Disabled="_isBusy"
+                                                       Style="text-transform: none;">
+                                                Reject
+                                            </MudButton>
+                                        }
+                                    </div>
+                                </MudTd>
+                            </RowTemplate>
+                        </MudTable>
+                    }
+                </MudPaper>
+            </MudTabPanel>
+
+            <!-- TAB: Pending Comments (Admin & Moderator) -->
+            <MudTabPanel Text="@($"Comment Queue ({_pendingComments.Count})")" Icon="@Icons.Material.Filled.Forum">
+                <MudPaper Class="pa-4" Elevation="0" Style="background-color: transparent;">
+                    <div class="d-flex justify-space-between align-center mb-4">
+                        <div>
+                            <MudText Typo="Typo.h6" Class="font-weight-bold">Pending Comments Moderation</MudText>
+                            <MudText Typo="Typo.caption" Color="Color.Secondary">
+                                Based on credit and account age gating, pending comments will be published once approved by moderators or admins.
+                            </MudText>
+                        </div>
+                        <MudButton Variant="Variant.Outlined" Color="Color.Primary" Size="Size.Small" StartIcon="@Icons.Material.Filled.Refresh" OnClick="LoadPendingCommentsAsync">
+                            Refresh
+                        </MudButton>
+                    </div>
+
+                    @if (_pendingComments.Count == 0)
+                    {
+                        <MudAlert Severity="Severity.Success" Variant="Variant.Outlined" Class="my-4 rounded-lg">
+                            No pending comments in the queue!
+                        </MudAlert>
+                    }
+                    else
+                    {
+                        <MudTable Items="_pendingComments" Hover="true" Breakpoint="Breakpoint.Sm" Elevation="0" Dense="true" Class="rounded-lg" Style="background-color: #1a2027; border: 1px solid rgba(255, 255, 255, 0.06);">
+                            <HeaderContent>
+                                <MudTh>Target Poll</MudTh>
+                                <MudTh>Author</MudTh>
+                                <MudTh>Gating Reason</MudTh>
+                                <MudTh>Comment Content</MudTh>
+                                <MudTh>Submitted At</MudTh>
+                                <MudTh Style="text-align: right;">Actions</MudTh>
+                            </HeaderContent>
+                            <RowTemplate>
+                                <MudTd DataLabel="Poll">
+                                    <a href="/poll/@context.PollId" target="_blank" style="color: #38bdf8; text-decoration: none; font-weight: 500;">
+                                        @context.PollTitle
+                                    </a>
+                                </MudTd>
+                                <MudTd DataLabel="Author">@context.UserName</MudTd>
+                                <MudTd DataLabel="Reason">
+                                    <MudChip T="string" Color="Color.Warning" Size="Size.Small" Variant="Variant.Outlined">
+                                        @context.GatingReason
+                                    </MudChip>
+                                </MudTd>
+                                <MudTd DataLabel="Content">
+                                    <div style="max-width: 380px; word-break: break-word; color: #cbd5e1;">
+                                        @context.Content
+                                    </div>
+                                </MudTd>
+                                <MudTd DataLabel="Submitted At">@context.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</MudTd>
+                                <MudTd Style="text-align: right;">
+                                    <div class="d-flex justify-end gap-1">
+                                        <MudButton Variant="Variant.Filled"
+                                                   Color="Color.Success"
+                                                   Size="Size.Small"
+                                                   StartIcon="@Icons.Material.Filled.Check"
+                                                   OnClick="@(() => ApproveCommentAsync(context.Id))"
+                                                   Disabled="_isBusy"
+                                                   Style="text-transform: none;">
+                                            Approve
+                                        </MudButton>
+                                        <MudButton Variant="Variant.Outlined"
+                                                   Color="Color.Error"
+                                                   Size="Size.Small"
+                                                   StartIcon="@Icons.Material.Filled.DeleteOutline"
+                                                   OnClick="@(() => OpenRemoveCommentDialog(context.Id))"
+                                                   Disabled="_isBusy"
+                                                   Style="text-transform: none;">
+                                            Remove
+                                        </MudButton>
+                                    </div>
+                                </MudTd>
+                            </RowTemplate>
+                        </MudTable>
+                    }
+                </MudPaper>
+            </MudTabPanel>
+
+            <!-- TAB 6: Content Reports Moderation (Admin & Moderator) -->
+            <MudTabPanel Text="@($"Reports ({_pendingReports.Count})")" Icon="@Icons.Material.Filled.Report">
+                <MudPaper Class="pa-4" Elevation="0" Style="background-color: transparent;">
+                    <div class="d-flex justify-space-between align-center mb-4">
+                        <div>
+                            <MudText Typo="Typo.h6" Class="font-weight-bold">Community Content Reports</MudText>
+                            <div style="font-size: 13px; color: #94a3b8;">
+                                Member-submitted flags for spam, hate speech, misinformation, or harassment.
+                            </div>
+                        </div>
+                        <MudButton Variant="Variant.Outlined" Color="Color.Primary" Size="Size.Small" StartIcon="@Icons.Material.Filled.Refresh" OnClick="LoadReportsAsync">
+                            Refresh
+                        </MudButton>
+                    </div>
+
+                    @if (_pendingReports.Count == 0)
+                    {
+                        <MudAlert Severity="Severity.Success" Variant="Variant.Outlined" Class="my-4 rounded-lg">
+                            No pending reports! Community reports are fully cleared.
+                        </MudAlert>
+                    }
+                    else
+                    {
+                        <div class="d-flex flex-column gap-3">
+                            @foreach (var report in _pendingReports)
+                            {
+                                <div class="pa-4 rounded-lg" style="background-color: #1e242d; border: 1px solid rgba(239, 68, 68, 0.25);">
+                                    <div class="d-flex justify-space-between align-start flex-wrap gap-2 mb-2">
+                                        <div class="d-flex align-center gap-2">
+                                            <span style="font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 4px; background: rgba(239, 68, 68, 0.15); color: #ef4444; border: 1px solid rgba(239, 68, 68, 0.3);">
+                                                @report.Reason
+                                            </span>
+                                            <span style="font-size: 12px; color: #94a3b8;">
+                                                Target: <strong style="color: #cbd5e1;">@(report.PollId.HasValue ? "Poll #" + report.PollId : "Comment #" + report.CommentId)</strong>
+                                            </span>
+                                        </div>
+                                        <div style="font-size: 11px; color: #64748b;">
+                                            Reported by <strong style="color: #94a3b8;">@report.ReporterName</strong> · @report.CreatedAt.ToLocalTime().ToString("MMM dd, HH:mm")
+                                        </div>
+                                    </div>
+
+                                    @if (!string.IsNullOrEmpty(report.CommentContent) || !string.IsNullOrEmpty(report.PollTitle))
+                                    {
+                                        <div class="pa-3 mb-2 rounded" style="background: rgba(0,0,0,0.25); border-left: 3px solid #ef4444; font-size: 13px; color: #cbd5e1;">
+                                            <div style="font-size: 11px; color: #94a3b8; margin-bottom: 2px;">Target Content Preview:</div>
+                                            @(report.CommentContent ?? report.PollTitle)
+                                        </div>
+                                    }
+
+                                    @if (!string.IsNullOrEmpty(report.Details))
+                                    {
+                                        <div style="font-size: 12px; color: #94a3b8; margin-bottom: 12px;">
+                                            <strong>Reporter Note:</strong> @report.Details
+                                        </div>
+                                    }
+
+                                    <div class="d-flex justify-end gap-2 mt-2">
+                                        <MudButton Variant="Variant.Text"
+                                                   Color="Color.Default"
+                                                   Size="Size.Small"
+                                                   OnClick="@(() => ResolveReportAsync(report.Id, false, false, "Dismissed as false positive"))"
+                                                   Disabled="_isSubmittingAction"
+                                                   Style="text-transform: none; color: #94a3b8;">
+                                            Dismiss Report
+                                        </MudButton>
+                                        <MudButton Variant="Variant.Outlined"
+                                                   Color="Color.Warning"
+                                                   Size="Size.Small"
+                                                   StartIcon="@Icons.Material.Filled.DeleteSweep"
+                                                   OnClick="@(() => ResolveReportAsync(report.Id, true, false, "Content removed due to community report"))"
+                                                   Disabled="_isSubmittingAction"
+                                                   Style="text-transform: none;">
+                                            Remove Content
+                                        </MudButton>
+                                        @if (_isAdmin)
+                                        {
+                                            <MudButton Variant="Variant.Filled"
+                                                       Color="Color.Error"
+                                                       Size="Size.Small"
+                                                       StartIcon="@Icons.Material.Filled.Gavel"
+                                                       OnClick="@(() => ResolveReportAsync(report.Id, true, true, "Violating community standards"))"
+                                                       Disabled="_isSubmittingAction"
+                                                       Style="text-transform: none;">
+                                                Remove & Ban Author
+                                            </MudButton>
+                                        }
+                                    </div>
+                                </div>
+                            }
+                        </div>
+                    }
+                </MudPaper>
+            </MudTabPanel>
+
+            @if (_isAdmin)
+            {
+                <!-- TAB: Site Announcement -->
+                <MudTabPanel Text="Announcement Banner" Icon="@Icons.Material.Filled.Campaign">
+                    <MudPaper Class="pa-4" Elevation="0" Style="background-color: transparent;">
+                        <div class="mb-4">
+                            <MudText Typo="Typo.h6" Class="font-weight-bold">Site-wide Top Ribbon Announcement</MudText>
+                            <div style="font-size: 13px; color: #94a3b8;">
+                                Configure a broadcast ribbon displayed at the top of every page.
+                            </div>
+                        </div>
+
+                        <div class="pa-4 rounded-xl" style="background-color: #1e242d; border: 1px solid rgba(255, 255, 255, 0.08); max-width: 680px;">
+                            <MudSwitch @bind-Value="_announcementActive" Color="Color.Primary" Label="Enable Announcement Banner" Class="mb-4" />
+
+                            <MudTextField @bind-Value="_announcementMessage"
+                                          Label="Announcement Message"
+                                          Placeholder="e.g. Scheduled maintenance this Saturday at 02:00 UTC."
+                                          Variant="Variant.Outlined"
+                                          Lines="2"
+                                          MaxLength="250"
+                                          Counter="250"
+                                          Class="mb-3" />
+
+                            <MudTextField @bind-Value="_announcementTargetUrl"
+                                          Label="Target Link URL (Optional)"
+                                          Placeholder="https://..."
+                                          Variant="Variant.Outlined"
+                                          Margin="Margin.Dense"
+                                          Class="mb-4" />
+
+                            <div class="d-flex justify-end">
+                                <MudButton Variant="Variant.Filled"
+                                           Color="Color.Primary"
+                                           StartIcon="@Icons.Material.Filled.Save"
+                                           OnClick="SaveAnnouncementAsync"
+                                           Disabled="_isSavingAnnouncement"
+                                           Style="text-transform: none; font-weight: 600;">
+                                    @if (_isSavingAnnouncement)
+                                    {
+                                        <MudProgressCircular Class="ms-n1 me-2" Size="Size.Small" Indeterminate="true" />
+                                        <span>Saving...</span>
+                                    }
+                                    else
+                                    {
+                                        <span>Save Announcement</span>
+                                    }
+                                </MudButton>
+                            </div>
+                        </div>
+                    </MudPaper>
+                </MudTabPanel>
+            }
+        </MudTabs>
+    </MudContainer>
+}
+
+<!-- Dialog: Return Poll for Revision -->
+<MudDialog @bind-Visible="_showReturnDialog" Options="_dialogOptions">
+    <TitleContent>
+        <MudText Typo="Typo.h6">Return Poll for Revision</MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudText Typo="Typo.body2" Class="mb-2">
+            Target Poll: <strong>@_actionPollTitle</strong>
+        </MudText>
+        <MudText Typo="Typo.caption" Color="Color.Secondary" Class="mb-3 d-block">
+            Specify the changes required. The author will be notified via email and allowed to update and resubmit the poll.
+        </MudText>
+        <MudTextField @bind-Value="_returnReason"
+                      Label="Feedback / Rejection Reason"
+                      Placeholder="e.g. Please clarify Option 2 and follow community guideline #3..."
+                      Lines="4"
+                      Variant="Variant.Outlined"
+                      Required="true" />
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="@(() => _showReturnDialog = false)" Disabled="_isSubmittingAction">Cancel</MudButton>
+        <MudButton Color="Color.Warning" Variant="Variant.Filled" OnClick="ConfirmReturnPollAsync" Disabled="_isSubmittingAction">
+            @if (_isSubmittingAction)
+            {
+                <MudProgressCircular Class="ms-n1" Size="Size.Small" Indeterminate="true" />
+                <span class="ms-2">Processing...</span>
+            }
+            else
+            {
+                <span>Submit & Notify Author</span>
+            }
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+<!-- Dialog: Remove Poll -->
+<MudDialog @bind-Visible="_showRemoveDialog" Options="_dialogOptions">
+    <TitleContent>
+        <MudText Typo="Typo.h6" Color="Color.Error">Remove Poll (Reddit-Style)</MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudText Typo="Typo.body2" Class="mb-2">
+            Target Poll: <strong>@_actionPollTitle</strong>
+        </MudText>
+        <MudText Typo="Typo.caption" Color="Color.Secondary" Class="mb-3 d-block">
+            The poll will be hidden from the public. Regular visitors will see a removal notice with your reason. The author will be notified by email and can still view it from their My Polls dashboard.
+        </MudText>
+        <MudTextField @bind-Value="_removeReason"
+                      Label="Removal Reason"
+                      Placeholder="e.g. Violates rule #2: No unsolicited promotional links..."
+                      Lines="4"
+                      Variant="Variant.Outlined"
+                      Required="true" />
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="@(() => _showRemoveDialog = false)" Disabled="_isSubmittingAction">Cancel</MudButton>
+        <MudButton Color="Color.Error" Variant="Variant.Filled" OnClick="ConfirmRemovePollAsync" Disabled="_isSubmittingAction">
+            @if (_isSubmittingAction)
+            {
+                <MudProgressCircular Class="ms-n1" Size="Size.Small" Indeterminate="true" />
+                <span class="ms-2">Removing...</span>
+            }
+            else
+            {
+                <span>Confirm Removal</span>
+            }
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+<!-- Dialog: Suspend / Ban Users -->
+<MudDialog @bind-Visible="_showBanDialog" Options="_dialogOptions">
+    <TitleContent>
+        <MudText Typo="Typo.h6" Color="Color.Error">Suspend User Account(s)</MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudText Typo="Typo.body2" Class="mb-3">
+            Suspending <strong>@_targetBanUserIds.Count</strong> user(s).
+        </MudText>
+        <MudRadioGroup @bind-Value="_banIsPermanent" Class="mb-3">
+            <MudRadio Value="false" Color="Color.Warning">Temporary Suspension</MudRadio>
+            <MudRadio Value="true" Color="Color.Error">Permanent Suspension</MudRadio>
+        </MudRadioGroup>
+
+        @if (!_banIsPermanent)
+        {
+            <MudNumericField @bind-Value="_banDays" Label="Duration in Days" Min="1" Max="365" Variant="Variant.Outlined" Class="mb-3" />
+        }
+
+        <MudTextField @bind-Value="_banReason"
+                      Label="Suspension Reason"
+                      Placeholder="e.g. Multiple spam poll creations or abusive conduct..."
+                      Lines="3"
+                      Variant="Variant.Outlined"
+                      Required="true" />
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="@(() => _showBanDialog = false)" Disabled="_isSubmittingAction">Cancel</MudButton>
+        <MudButton Color="Color.Error" Variant="Variant.Filled" OnClick="ConfirmBanUsersAsync" Disabled="_isSubmittingAction">
+            @if (_isSubmittingAction)
+            {
+                <MudProgressCircular Class="ms-n1" Size="Size.Small" Indeterminate="true" />
+                <span class="ms-2">Suspending...</span>
+            }
+            else
+            {
+                <span>Confirm Suspension</span>
+            }
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+<!-- Dialog: Bulk Email -->
+<MudDialog @bind-Visible="_showEmailDialog" Options="_dialogOptions">
+    <TitleContent>
+        <MudText Typo="Typo.h6" Color="Color.Primary">Send Email to Selected Users</MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudText Typo="Typo.body2" Class="mb-3">
+            Recipient Count: <strong>@_selectedUserIds.Count</strong> user(s).
+        </MudText>
+        <MudTextField @bind-Value="_emailSubject" Label="Subject" Variant="Variant.Outlined" Class="mb-3" Required="true" />
+        <MudTextField @bind-Value="_emailBody" Label="Message Body" Lines="6" Variant="Variant.Outlined" Required="true" />
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="@(() => _showEmailDialog = false)" Disabled="_isSendingEmail">Cancel</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" OnClick="ConfirmBulkEmailAsync" Disabled="_isSendingEmail">
+            @if (_isSendingEmail)
+            {
+                <MudProgressCircular Class="ms-n1" Size="Size.Small" Indeterminate="true" />
+                <span class="ms-2">Sending...</span>
+            }
+            else
+            {
+                <span>Send Email</span>
+            }
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+<!-- Dialog: Reject Category Request -->
+<MudDialog @bind-Visible="_showRejectCategoryDialog" Options="_dialogOptions">
+    <TitleContent>
+        <MudText Typo="Typo.h6" Color="Color.Error">Reject Board Request</MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudText Typo="Typo.body2" Class="mb-2">
+            Target Board: <strong>@_rejectCategoryTargetName</strong>
+        </MudText>
+        <MudTextField @bind-Value="_rejectCategoryReason"
+                      Label="Rejection Reason"
+                      Placeholder="Explain why this board request is rejected (e.g. Scope too narrow, duplicate board, etc.)..."
+                      Lines="3"
+                      Variant="Variant.Outlined"
+                      Required="true" />
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="@(() => _showRejectCategoryDialog = false)" Disabled="_isSubmittingAction">Cancel</MudButton>
+        <MudButton Color="Color.Error" Variant="Variant.Filled" OnClick="ConfirmRejectCategoryAsync" Disabled="_isSubmittingAction">
+            @if (_isSubmittingAction)
+            {
+                <MudProgressCircular Class="ms-n1" Size="Size.Small" Indeterminate="true" />
+                <span class="ms-2">Processing...</span>
+            }
+            else
+            {
+                <span>Confirm Rejection</span>
+            }
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+<!-- Dialog: Remove Comment -->
+<MudDialog @bind-Visible="_showRemoveCommentDialog" Options="_dialogOptions">
+    <TitleContent>
+        <MudText Typo="Typo.h6" Color="Color.Error">Remove Violating Comment</MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudTextField @bind-Value="_removeCommentReason"
+                      Label="Removal Reason (Optional)"
+                      Placeholder="Comment removed by moderator"
+                      Lines="3"
+                      Variant="Variant.Outlined" />
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="@(() => _showRemoveCommentDialog = false)" Disabled="_isSubmittingAction">Cancel</MudButton>
+        <MudButton Color="Color.Error" Variant="Variant.Filled" OnClick="ConfirmRemoveCommentAsync" Disabled="_isSubmittingAction">
+            @if (_isSubmittingAction)
+            {
+                <MudProgressCircular Class="ms-n1" Size="Size.Small" Indeterminate="true" />
+                <span class="ms-2">Processing...</span>
+            }
+            else
+            {
+                <span>Confirm Removal</span>
+            }
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    private bool _isCheckingAuth = true;
+    private bool _canAccess = false;
+    private bool _isAdmin = false;
+    private bool _isSuperModerator = false;
+    private bool _isModerator = false;
+    private string _currentUserId = string.Empty;
+
+    private AdminDashboardStatsDto? _stats;
+    private List<PendingReviewPollDto> _pendingPolls = new();
+    private List<PollListItemDto> _adminPolls = new();
+    private List<AdminUserDto> _users = new();
+
+    // Categories & Comments Queue
+    private List<CategoryRequestDto> _categoryRequests = new();
+    private List<PendingCommentDto> _pendingComments = new();
+    private List<ContentReportDto> _pendingReports = new();
+
+    private bool _showRejectCategoryDialog;
+    private int _rejectCategoryTargetId;
+    private string _rejectCategoryTargetName = "";
+    private string _rejectCategoryReason = "";
+
+    private bool _showRemoveCommentDialog;
+    private int _removeCommentTargetId;
+    private string _removeCommentReason = "";
+
+    // Filters
+    private string _allPollsSearch = string.Empty;
+    private PollStatus? _filterStatus = null;
+    private string _userSearch = string.Empty;
+    private string _roleFilter = string.Empty;
+    private bool _bannedOnly = false;
+
+    // Selection
+    private HashSet<string> _selectedUserIds = new();
+    private bool _isAllUsersSelected => _users.Count > 0 && _selectedUserIds.Count == _users.Count;
+
+    // Dialog state
+    private readonly DialogOptions _dialogOptions = new() { MaxWidth = MaxWidth.Small, FullWidth = true, CloseButton = true };
+    private int _actionPollId;
+    private string _actionPollTitle = string.Empty;
+    private bool _showReturnDialog;
+    private string _returnReason = string.Empty;
+    private bool _showRemoveDialog;
+    private string _removeReason = string.Empty;
+
+    // Ban dialog state
+    private bool _showBanDialog;
+    private List<string> _targetBanUserIds = new();
+    private bool _banIsPermanent = false;
+    private int _banDays = 7;
+    private string _banReason = string.Empty;
+
+    // Email dialog state
+    private bool _showEmailDialog;
+    private string _emailSubject = string.Empty;
+    private string _emailBody = string.Empty;
+
+    // Loading & action states
+    private int? _approvingPollId = null;
+    private bool _isSubmittingAction = false;
+    private bool _isSendingEmail = false;
+    private bool _isBusy => _approvingPollId.HasValue || _isSubmittingAction || _isSendingEmail;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var user = authState.User;
+
+        if (user.Identity?.IsAuthenticated == true)
+        {
+            _currentUserId = user.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value ?? "";
+            _isAdmin = user.IsInRole("Admin") || _currentUserId == "00000000-0000-0000-0000-000000000000";
+            _isSuperModerator = user.IsInRole("SuperModerator");
+            _isModerator = user.IsInRole("Moderator") || _isSuperModerator;
+            _canAccess = _isAdmin || _isModerator;
+        }
+
+        _isCheckingAuth = false;
+
+        if (_canAccess)
+        {
+            await LoadPendingPollsAsync();
+            await LoadCategoryRequestsAsync();
+            await LoadPendingCommentsAsync();
+            await LoadReportsAsync();
+
+            if (_isAdmin)
+            {
+                await LoadStatsAsync();
+                await LoadAdminPollsAsync();
+                await LoadUsersAsync();
+                await LoadAnnouncementAsync();
+            }
+        }
+    }
+
+    // Announcement state
+    private bool _announcementActive = false;
+    private string _announcementMessage = "";
+    private string? _announcementTargetUrl;
+    private bool _isSavingAnnouncement = false;
+
+    private async Task LoadAnnouncementAsync()
+    {
+        try
+        {
+            var a = await PollApi.GetActiveAnnouncementAsync();
+            if (a != null)
+            {
+                _announcementActive = a.IsActive;
+                _announcementMessage = a.Message;
+                _announcementTargetUrl = a.TargetUrl;
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error loading announcement: {ex.Message}");
+        }
+    }
+
+    private async Task SaveAnnouncementAsync()
+    {
+        if (_announcementActive && string.IsNullOrWhiteSpace(_announcementMessage))
+        {
+            Snackbar.Add("Announcement message cannot be empty when active.", Severity.Warning);
+            return;
+        }
+
+        _isSavingAnnouncement = true;
+        try
+        {
+            var req = new UpdateAnnouncementRequest
+            {
+                IsActive = _announcementActive,
+                Message = _announcementMessage.Trim(),
+                TargetUrl = string.IsNullOrWhiteSpace(_announcementTargetUrl) ? null : _announcementTargetUrl.Trim()
+            };
+
+            var res = await PollApi.UpdateAnnouncementAsync(req);
+            if (res.Success)
+            {
+                Snackbar.Add("Announcement updated successfully.", Severity.Success);
+            }
+            else
+            {
+                Snackbar.Add(res.Message, Severity.Error);
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Failed to update announcement: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isSavingAnnouncement = false;
+        }
+    }
+
+    private async Task LoadStatsAsync()
+    {
+        _stats = await AdminApi.GetStatsAsync();
+    }
+
+    private async Task LoadPendingPollsAsync()
+    {
+        _pendingPolls = await AdminApi.GetPendingPollsAsync();
+    }
+
+    private async Task LoadAdminPollsAsync()
+    {
+        _adminPolls = await AdminApi.GetAllPollsAsync(_allPollsSearch, _filterStatus);
+    }
+
+    private async Task LoadUsersAsync()
+    {
+        _users = await AdminApi.GetUsersAsync(1, 100, _userSearch);
+        if (!string.IsNullOrWhiteSpace(_roleFilter))
+        {
+            _users = _users.Where(u => u.Roles.Contains(_roleFilter)).ToList();
+        }
+        if (_bannedOnly)
+        {
+            _users = _users.Where(u => u.IsCurrentlyBanned).ToList();
+        }
+        _selectedUserIds.RemoveWhere(id => !_users.Any(u => u.Id == id));
+    }
+
+    private async Task OnPollStatusFilterChanged(PollStatus? status)
+    {
+        _filterStatus = status;
+        await LoadAdminPollsAsync();
+    }
+
+    private async Task OnRoleFilterChanged(string role)
+    {
+        _roleFilter = role;
+        await LoadUsersAsync();
+    }
+
+    private async Task OnBannedFilterChanged(bool bannedOnly)
+    {
+        _bannedOnly = bannedOnly;
+        await LoadUsersAsync();
+    }
+
+    private async Task ApprovePollAsync(int pollId)
+    {
+        _approvingPollId = pollId;
+        try
+        {
+            var res = await AdminApi.ApprovePollAsync(pollId);
+            if (res.Success)
+            {
+                Snackbar.Add(res.Message, Severity.Success);
+                await LoadPendingPollsAsync();
+                if (_isAdmin)
+                {
+                    await LoadStatsAsync();
+                    await LoadAdminPollsAsync();
+                }
+            }
+            else
+            {
+                Snackbar.Add(res.Message, Severity.Error);
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Approval failed: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _approvingPollId = null;
+        }
+    }
+
+    private void OpenReturnPollDialog(int pollId, string title)
+    {
+        _actionPollId = pollId;
+        _actionPollTitle = title;
+        _returnReason = string.Empty;
+        _showReturnDialog = true;
+    }
+
+    private async Task ConfirmReturnPollAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_returnReason))
+        {
+            Snackbar.Add("Please provide a feedback reason.", Severity.Warning);
+            return;
+        }
+
+        _isSubmittingAction = true;
+        try
+        {
+            var res = await AdminApi.ReturnPollForRevisionAsync(_actionPollId, _returnReason);
+            _showReturnDialog = false;
+            if (res.Success)
+            {
+                Snackbar.Add(res.Message, Severity.Success);
+                await LoadPendingPollsAsync();
+                if (_isAdmin) await LoadAdminPollsAsync();
+            }
+            else
+            {
+                Snackbar.Add(res.Message, Severity.Error);
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Return failed: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isSubmittingAction = false;
+        }
+    }
+
+    private void OpenRemovePollDialog(int pollId, string title)
+    {
+        _actionPollId = pollId;
+        _actionPollTitle = title;
+        _removeReason = string.Empty;
+        _showRemoveDialog = true;
+    }
+
+    private async Task ConfirmRemovePollAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_removeReason))
+        {
+            Snackbar.Add("Please provide a reason for removal.", Severity.Warning);
+            return;
+        }
+
+        _isSubmittingAction = true;
+        try
+        {
+            var res = await AdminApi.RemovePollAsync(_actionPollId, _removeReason);
+            _showRemoveDialog = false;
+            if (res.Success)
+            {
+                Snackbar.Add(res.Message, Severity.Success);
+                await LoadPendingPollsAsync();
+                if (_isAdmin) await LoadAdminPollsAsync();
+            }
+            else
+            {
+                Snackbar.Add(res.Message, Severity.Error);
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Removal failed: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isSubmittingAction = false;
+        }
+    }
+
+    private async Task ArchivePollAsync(int pollId)
+    {
+        var res = await AdminApi.ArchivePollAsync(pollId, "Archived by Administrator");
+        if (res.Success)
+        {
+            Snackbar.Add(res.Message, Severity.Success);
+            await LoadAdminPollsAsync();
+        }
+        else
+        {
+            Snackbar.Add(res.Message, Severity.Error);
+        }
+    }
+
+    private async Task TogglePinAsync(int pollId)
+    {
+        var res = await AdminApi.TogglePinPollAsync(pollId);
+        if (res.Success)
+        {
+            Snackbar.Add(res.Message, Severity.Success);
+            await LoadAdminPollsAsync();
+        }
+        else
+        {
+            Snackbar.Add(res.Message, Severity.Error);
+        }
+    }
+
+    // User Selection
+    private void ToggleSelectAllUsers(bool selectAll)
+    {
+        if (selectAll)
+        {
+            _selectedUserIds = _users.Select(u => u.Id).ToHashSet();
+        }
+        else
+        {
+            _selectedUserIds.Clear();
+        }
+    }
+
+    private void ToggleUserSelection(string userId, bool isSelected)
+    {
+        if (isSelected) _selectedUserIds.Add(userId);
+        else _selectedUserIds.Remove(userId);
+    }
+
+    private void ClearUserSelection()
+    {
+        _selectedUserIds.Clear();
+    }
+
+    private void OpenSingleBanDialog(string userId, string userName)
+    {
+        _targetBanUserIds = new List<string> { userId };
+        _banIsPermanent = false;
+        _banDays = 7;
+        _banReason = string.Empty;
+        _showBanDialog = true;
+    }
+
+    private void OpenBulkBanDialog()
+    {
+        _targetBanUserIds = _selectedUserIds.ToList();
+        _banIsPermanent = false;
+        _banDays = 7;
+        _banReason = string.Empty;
+        _showBanDialog = true;
+    }
+
+    private async Task ConfirmBanUsersAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_banReason))
+        {
+            Snackbar.Add("Please provide a suspension reason.", Severity.Warning);
+            return;
+        }
+
+        _isSubmittingAction = true;
+        try
+        {
+            int count = 0;
+            foreach (var uid in _targetBanUserIds)
+            {
+                var res = await AdminApi.BanUserAsync(new BanUserRequest
+                {
+                    UserId = uid,
+                    BanType = _banIsPermanent ? "Permanent" : "Temporary",
+                    DurationDays = _banDays,
+                    Reason = _banReason
+                });
+                if (res.Success) count++;
+            }
+
+            _showBanDialog = false;
+            Snackbar.Add($"Suspended {count} user(s).", count > 0 ? Severity.Success : Severity.Warning);
+            await LoadUsersAsync();
+            await LoadStatsAsync();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Suspension error: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isSubmittingAction = false;
+        }
+    }
+
+    private async Task UnbanSingleUserAsync(string userId)
+    {
+        var res = await AdminApi.UnbanUserAsync(userId);
+        Snackbar.Add(res.Message, res.Success ? Severity.Success : Severity.Warning);
+        await LoadUsersAsync();
+        await LoadStatsAsync();
+    }
+
+    private async Task BulkUnbanUsersAsync()
+    {
+        int count = 0;
+        foreach (var uid in _selectedUserIds)
+        {
+            var res = await AdminApi.UnbanUserAsync(uid);
+            if (res.Success) count++;
+        }
+        Snackbar.Add($"Unbanned {count} user(s).", count > 0 ? Severity.Success : Severity.Warning);
+        await LoadUsersAsync();
+        await LoadStatsAsync();
+    }
+
+    private async Task ResetPasswordAsync(string userId, string userName)
+    {
+        var res = await AdminApi.ResetPasswordAsync(userId);
+        if (res.Success)
+        {
+            Snackbar.Add($"Password reset email dispatched for {userName}.", Severity.Success, config =>
+            {
+                config.RequireInteraction = true;
+            });
+        }
+        else
+        {
+            Snackbar.Add(res.Message, Severity.Error);
+        }
+    }
+
+    private async Task ToggleUserRoleAsync(string userId, string role, bool enable)
+    {
+        var res = await AdminApi.UpdateRoleAsync(new UpdateRoleRequest { UserId = userId, NewRole = role, Enable = enable });
+        if (res.Success)
+        {
+            Snackbar.Add(res.Message, Severity.Success);
+            await LoadUsersAsync();
+        }
+        else
+        {
+            Snackbar.Add(res.Message, Severity.Error);
+        }
+    }
+
+    private void OpenBulkEmailDialog()
+    {
+        _emailSubject = string.Empty;
+        _emailBody = string.Empty;
+        _showEmailDialog = true;
+    }
+
+    private async Task ConfirmBulkEmailAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_emailSubject) || string.IsNullOrWhiteSpace(_emailBody))
+        {
+            Snackbar.Add("Subject and message body are required.", Severity.Warning);
+            return;
+        }
+
+        _isSendingEmail = true;
+        try
+        {
+            var res = await AdminApi.SendBulkEmailAsync(new BulkEmailRequest
+            {
+                UserIds = _selectedUserIds.ToList(),
+                Subject = _emailSubject,
+                Body = _emailBody
+            });
+            _showEmailDialog = false;
+            Snackbar.Add(res.Message, res.Success ? Severity.Success : Severity.Warning);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Failed to send email: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isSendingEmail = false;
+        }
+    }
+
+    private async Task LoadCategoryRequestsAsync()
+    {
+        try
+        {
+            _categoryRequests = await AdminApi.GetCategoryRequestsAsync();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error loading category requests: {ex.Message}");
+        }
+    }
+
+    private async Task ReviewCategoryRequestAsync(int requestId, bool approve, string? comment = null)
+    {
+        _isSubmittingAction = true;
+        try
+        {
+            var res = await AdminApi.ReviewCategoryRequestAsync(requestId, new ReviewCategoryRequest { Approve = approve, Comment = comment });
+            if (res.Success)
+            {
+                Snackbar.Add(res.Message, Severity.Success);
+                await LoadCategoryRequestsAsync();
+            }
+            else
+            {
+                Snackbar.Add(res.Message, Severity.Error);
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Review action failed: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isSubmittingAction = false;
+        }
+    }
+
+    private void OpenRejectCategoryDialog(int requestId, string categoryName)
+    {
+        _rejectCategoryTargetId = requestId;
+        _rejectCategoryTargetName = categoryName;
+        _rejectCategoryReason = string.Empty;
+        _showRejectCategoryDialog = true;
+    }
+
+    private async Task ConfirmRejectCategoryAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_rejectCategoryReason))
+        {
+            Snackbar.Add("Please provide a rejection reason.", Severity.Warning);
+            return;
+        }
+
+        _showRejectCategoryDialog = false;
+        await ReviewCategoryRequestAsync(_rejectCategoryTargetId, false, _rejectCategoryReason);
+    }
+
+    private async Task LoadPendingCommentsAsync()
+    {
+        try
+        {
+            _pendingComments = await AdminApi.GetPendingCommentsAsync();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error loading pending comments: {ex.Message}");
+        }
+    }
+
+    private async Task ApproveCommentAsync(int commentId)
+    {
+        _isSubmittingAction = true;
+        try
+        {
+            var res = await AdminApi.ApproveCommentAsync(commentId);
+            if (res.Success)
+            {
+                Snackbar.Add(res.Message, Severity.Success);
+                await LoadPendingCommentsAsync();
+            }
+            else
+            {
+                Snackbar.Add(res.Message, Severity.Error);
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Action failed: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isSubmittingAction = false;
+        }
+    }
+
+    private void OpenRemoveCommentDialog(int commentId)
+    {
+        _removeCommentTargetId = commentId;
+        _removeCommentReason = string.Empty;
+        _showRemoveCommentDialog = true;
+    }
+
+    private async Task ConfirmRemoveCommentAsync()
+    {
+        _showRemoveCommentDialog = false;
+        _isSubmittingAction = true;
+        try
+        {
+            var res = await AdminApi.RemoveCommentAsync(_removeCommentTargetId, _removeCommentReason);
+            if (res.Success)
+            {
+                Snackbar.Add(res.Message, Severity.Success);
+                await LoadPendingCommentsAsync();
+            }
+            else
+            {
+                Snackbar.Add(res.Message, Severity.Error);
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Action failed: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isSubmittingAction = false;
+        }
+    }
+
+    private async Task LoadReportsAsync()
+    {
+        try
+        {
+            var res = await AdminApi.GetPendingReportsAsync(1, 50);
+            _pendingReports = res.Items ?? new();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Failed to load reports: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private async Task ResolveReportAsync(int reportId, bool removeContent, bool banUser, string reason)
+    {
+        _isSubmittingAction = true;
+        try
+        {
+            var req = new ResolveReportRequest
+            {
+                Dismiss = !removeContent && !banUser,
+                RemoveContent = removeContent,
+                BanAuthor = banUser,
+                Notes = reason
+            };
+            var res = await AdminApi.ResolveReportAsync(reportId, req);
+            if (res.Success)
+            {
+                Snackbar.Add(res.Message, Severity.Success);
+                await LoadReportsAsync();
+                if (removeContent)
+                {
+                    await LoadAdminPollsAsync();
+                    await LoadPendingCommentsAsync();
+                }
+                if (banUser)
+                {
+                    await LoadUsersAsync();
+                }
+            }
+            else
+            {
+                Snackbar.Add(res.Message, Severity.Error);
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Resolve failed: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isSubmittingAction = false;
+        }
+    }
+}

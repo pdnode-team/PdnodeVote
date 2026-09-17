@@ -1,0 +1,206 @@
+@page "/Account/Manage/Passkeys"
+
+@using PdnodeVote.Data
+@using Microsoft.AspNetCore.Identity
+@using System.ComponentModel.DataAnnotations
+@using System.Buffers.Text
+
+@inject UserManager<ApplicationUser> UserManager
+@inject SignInManager<ApplicationUser> SignInManager
+@inject IdentityRedirectManager RedirectManager
+
+<PageTitle>Passkeys - Pdnode Vote</PageTitle>
+
+<div class="mb-4">
+    <h4 class="fw-bold mb-2 d-flex align-items-center gap-2" style="color: #f8fafc;">
+        <i class="bi bi-fingerprint" style="color: #10b981;"></i>
+        <span>Passkeys</span>
+    </h4>
+    <p class="small mb-0" style="color: #a6adbb;">
+        Passkeys are a modern and secure replacement for passwords based on FIDO2 / WebAuthn standards. Sign in quickly using biometric sensors (Fingerprint, Face ID, Windows Hello) or security keys.
+    </p>
+</div>
+
+<StatusMessage />
+
+@if (currentPasskeys is { Count: > 0 })
+{
+    <div class="d-flex flex-column gap-3 mb-4">
+        @foreach (var passkey in currentPasskeys)
+        {
+            var credentialId = Base64Url.EncodeToString(passkey.CredentialId);
+            <div class="p-3 rounded-3 d-flex flex-column flex-md-row align-items-md-center justify-content-between" style="background-color: #191e24; border: 1px solid #384252;">
+                <div class="d-flex align-items-center mb-3 mb-md-0">
+                    <div class="me-3 d-flex align-items-center justify-content-center rounded-circle flex-shrink-0" style="width: 44px; height: 44px; background-color: rgba(16, 185, 129, 0.15); color: #10b981; font-size: 1.4rem;">
+                        <i class="bi bi-fingerprint"></i>
+                    </div>
+                    <div>
+                        <div class="fw-bold fs-6" style="color: #f8fafc;">@(string.IsNullOrWhiteSpace(passkey.Name) ? "Unnamed Passkey" : passkey.Name)</div>
+                        <div class="small font-monospace" style="color: #64748b; font-size: 0.78rem;">Credential ID: @(credentialId.Length > 16 ? credentialId.Substring(0, 16) + "..." : credentialId)</div>
+                    </div>
+                </div>
+                <form @formname="@($"update-passkey-{credentialId}")" @onsubmit="UpdatePasskey" method="post" class="d-flex gap-2">
+                    <AntiforgeryToken />
+                    <input type="hidden" name="CredentialId" value="@credentialId" />
+                    <button type="submit" name="Action" value="rename" class="btn btn-sm btn-outline-secondary d-flex align-items-center gap-1" style="color: #a6adbb; border-color: #4b5563;" title="Rename passkey">
+                        <i class="bi bi-pencil-square"></i>
+                        <span>Rename</span>
+                    </button>
+                    <button type="submit" name="Action" value="delete" class="btn btn-sm btn-outline-danger d-flex align-items-center gap-1" title="Delete passkey">
+                        <i class="bi bi-trash"></i>
+                        <span>Delete</span>
+                    </button>
+                </form>
+            </div>
+        }
+    </div>
+}
+else
+{
+    <div class="text-center py-5 rounded-3 mb-4" style="background-color: #191e24; border: 1px dashed #384252;">
+        <div class="d-inline-flex align-items-center justify-content-center rounded-circle mb-3" style="width: 64px; height: 64px; background-color: rgba(255, 255, 255, 0.05); color: #64748b; font-size: 2rem;">
+            <i class="bi bi-fingerprint"></i>
+        </div>
+        <h6 class="fw-bold" style="color: #94a3b8;">No passkeys registered yet</h6>
+        <p class="small text-muted mb-0 px-3" style="max-width: 440px; margin: 0 auto;">
+            Click below to trigger your browser's WebAuthn prompt and pair your fingerprint, face recognition, or security key.
+        </p>
+    </div>
+}
+
+<form @formname="add-passkey" @onsubmit="AddPasskey" method="post">
+    <AntiforgeryToken />
+    @if (currentPasskeys is { Count: >= MaxPasskeyCount })
+    {
+        <p class="text-danger small">You have reached the maximum number of allowed passkeys (@MaxPasskeyCount).</p>
+    }
+    else
+    {
+        <PasskeySubmit Operation="PasskeyOperation.Create" Name="Input" class="btn btn-primary d-inline-flex align-items-center gap-2 px-4 py-2 fw-bold">
+            <i class="bi bi-plus-circle"></i>
+            <span>Add New Passkey</span>
+        </PasskeySubmit>
+    }
+</form>
+
+@code {
+    private const int MaxPasskeyCount = 100;
+
+    private ApplicationUser? user;
+    private IList<UserPasskeyInfo>? currentPasskeys;
+
+    [CascadingParameter]
+    private HttpContext HttpContext { get; set; } = default!;
+
+    [SupplyParameterFromForm]
+    private string? Action { get; set; }
+
+    [SupplyParameterFromForm]
+    private string? CredentialId { get; set; }
+
+    [SupplyParameterFromForm(FormName = "add-passkey")]
+    private PasskeyInputModel Input { get; set; } = default!;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Input ??= new();
+
+        user = await UserManager.GetUserAsync(HttpContext.User);
+        if (user is null)
+        {
+            RedirectManager.RedirectToInvalidUser(UserManager, HttpContext);
+            return;
+        }
+        currentPasskeys = await UserManager.GetPasskeysAsync(user);
+    }
+
+    private async Task AddPasskey()
+    {
+        if (user is null)
+        {
+            RedirectManager.RedirectToInvalidUser(UserManager, HttpContext);
+            return;
+        }
+
+        if (!string.IsNullOrEmpty(Input.Error))
+        {
+            RedirectManager.RedirectToCurrentPageWithStatus($"Error: {Input.Error}", HttpContext);
+            return;
+        }
+
+        if (string.IsNullOrEmpty(Input.CredentialJson))
+        {
+            RedirectManager.RedirectToCurrentPageWithStatus("Error: The browser did not provide a passkey.", HttpContext);
+            return;
+        }
+
+        if (currentPasskeys!.Count >= MaxPasskeyCount)
+        {
+            RedirectManager.RedirectToCurrentPageWithStatus($"Error: You have reached the maximum number of allowed passkeys.", HttpContext);
+            return;
+        }
+
+        var attestationResult = await SignInManager.PerformPasskeyAttestationAsync(Input.CredentialJson);
+        if (!attestationResult.Succeeded)
+        {
+            RedirectManager.RedirectToCurrentPageWithStatus($"Error: Could not add the passkey: {attestationResult.Failure.Message}", HttpContext);
+            return;
+        }
+
+        var addPasskeyResult = await UserManager.AddOrUpdatePasskeyAsync(user, attestationResult.Passkey);
+        if (!addPasskeyResult.Succeeded)
+        {
+            RedirectManager.RedirectToCurrentPageWithStatus("Error: The passkey could not be added to your account.", HttpContext);
+            return;
+        }
+
+        // Immediately prompt the user to enter a name for the credential
+        var credentialIdBase64Url = Base64Url.EncodeToString(attestationResult.Passkey.CredentialId);
+        RedirectManager.RedirectTo($"Account/Manage/RenamePasskey/{credentialIdBase64Url}");
+    }
+
+    private async Task UpdatePasskey()
+    {
+        switch (Action)
+        {
+            case "rename":
+                RedirectManager.RedirectTo($"Account/Manage/RenamePasskey/{CredentialId}");
+                break;
+            case "delete":
+                await DeletePasskey();
+                break;
+            default:
+                RedirectManager.RedirectToCurrentPageWithStatus($"Error: Unknown action '{Action}'.", HttpContext);
+                break;
+        }
+    }
+
+    private async Task DeletePasskey()
+    {
+        if (user is null)
+        {
+            RedirectManager.RedirectToInvalidUser(UserManager, HttpContext);
+            return;
+        }
+
+        byte[] credentialId;
+        try
+        {
+            credentialId = Base64Url.DecodeFromChars(CredentialId);
+        }
+        catch (FormatException)
+        {
+            RedirectManager.RedirectToCurrentPageWithStatus("Error: The specified passkey ID had an invalid format.", HttpContext);
+            return;
+        }
+
+        var result = await UserManager.RemovePasskeyAsync(user, credentialId);
+        if (!result.Succeeded)
+        {
+            RedirectManager.RedirectToCurrentPageWithStatus("Error: The passkey could not be deleted.", HttpContext);
+            return;
+        }
+
+        RedirectManager.RedirectToCurrentPageWithStatus("Passkey deleted successfully.", HttpContext);
+    }
+}

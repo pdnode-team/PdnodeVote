@@ -1,0 +1,240 @@
+@inherits LayoutComponentBase
+@using System.Security.Claims
+@using Microsoft.AspNetCore.Components.Authorization
+@using Microsoft.AspNetCore.Identity
+@using PdnodeVote.Data
+@inject NavigationManager NavigationManager
+@inject UserManager<ApplicationUser> UserManager
+
+<MudThemeProvider @bind-IsDarkMode="@_isDarkMode" Theme="_customTheme" />
+
+<CascadingValue Value="@RequestAuthState" IsFixed="true">
+<MudLayout Style="background-color: #161a1f; min-height: 100vh;">
+    <SiteAnnouncementBanner @rendermode="InteractiveAuto" />
+    <!-- Read failures surface here instead of masquerading as empty results (see ApiErrorState). -->
+    <ApiErrorBanner @rendermode="InteractiveAuto" />
+    <!-- Top Navigation Bar: Minimalist Tech Aesthetic (Linear / Geist inspired) -->
+    <MudAppBar Elevation="0" Dense="false" Style="background-color: #161a1f; border-bottom: 1px solid rgba(255, 255, 255, 0.08);" Fixed="false">
+        <div class="d-flex align-center cursor-pointer" @onclick="@(() => NavigationManager.NavigateTo("/"))">
+            <span style="font-size: 18px; font-weight: 700; letter-spacing: -0.03em; color: #f8fafc;">
+                Pdnode Vote
+            </span>
+        </div>
+        <MudSpacer />
+
+        <MudButton Variant="Variant.Text" Style="color: #94a3b8; font-weight: 500; text-transform: none; font-size: 14px;" Href="/" Class="mx-1">
+            Explore
+        </MudButton>
+
+        <AuthorizeView Context="authContext">
+            <Authorized>
+                <NotificationBell @rendermode="InteractiveAuto" />
+
+                <details class="user-dropdown ml-2">
+                    <summary>
+                        <span style="display: flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: 50%; background-color: #10b981; color: #fff; font-size: 12px; font-weight: bold;">
+                            @((authContext.User.Identity?.Name ?? "U").ToUpper().FirstOrDefault())
+                        </span>
+                        <span style="max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                            @(authContext.User.Identity?.Name ?? "Profile")
+                        </span>
+                        <svg style="width: 16px; height: 16px; fill: currentColor; opacity: 0.7;" viewBox="0 0 24 24">
+                            <path d="M7 10l5 5 5-5z" />
+                        </svg>
+                    </summary>
+                    <div class="user-dropdown-menu">
+                        <div class="user-dropdown-header">
+                            <div style="font-weight: 600; color: #f8fafc; display: flex; align-items: center; justify-content: space-between;">
+                                <span>@(authContext.User.Identity?.Name ?? "User")</span>
+                                @if (authContext.User.IsInRole("Admin") || SystemConstants.IsRootAdmin(authContext.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value))
+                                {
+                                    <span style="font-size: 11px; padding: 2px 8px; border-radius: 9999px; background-color: #10b981; color: #fff; font-weight: 600;">Admin</span>
+                                }
+                                else if (authContext.User.IsInRole("Moderator"))
+                                {
+                                    <span style="font-size: 11px; padding: 2px 8px; border-radius: 9999px; background-color: #0ea5e9; color: #fff; font-weight: 600;">Moderator</span>
+                                }
+                            </div>
+                            <div style="font-size: 12px; color: #94a3b8; margin-top: 2px;">Signed in</div>
+                        </div>
+
+                        <a href="@($"/user/{authContext.User.Identity?.Name}")" class="user-dropdown-item">
+                            <svg style="width: 18px; height: 18px; fill: #6366f1;" viewBox="0 0 24 24">
+                                <path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z" />
+                            </svg>
+                            <span>Public Profile</span>
+                        </a>
+
+                        @if (authContext.User.IsInRole("Admin") || authContext.User.IsInRole("Moderator") || SystemConstants.IsRootAdmin(authContext.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value))
+                        {
+                            <a href="/admin" class="user-dropdown-item">
+                                <svg style="width: 18px; height: 18px; fill: #38bdf8;" viewBox="0 0 24 24">
+                                    <path d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm-2 16l-4-4 1.41-1.41L10 14.17l6.59-6.59L18 9l-8 8z" />
+                                </svg>
+                                <span>@(authContext.User.IsInRole("Admin") || SystemConstants.IsRootAdmin(authContext.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value) ? "Admin Portal" : "Review Queue")</span>
+                            </a>
+                        }
+
+                        <a href="/my-polls" class="user-dropdown-item">
+                            <svg style="width: 18px; height: 18px; fill: #10b981;" viewBox="0 0 24 24">
+                                <path d="M4 10.5c-.83 0-1.5.67-1.5 1.5s.67 1.5 1.5 1.5 1.5-.67 1.5-1.5-.67-1.5-1.5-1.5zm0-6c-.83 0-1.5.67-1.5 1.5S3.17 7.5 4 7.5 5.5 6.83 5.5 6 4.83 4.5 4 4.5zm0 12c-.83 0-1.5.68-1.5 1.5s.68 1.5 1.5 1.5 1.5-.68 1.5-1.5-.67-1.5-1.5-1.5zM7 19h14v-2H7v2zm0-6h14v-2H7v2zm0-8v2h14V5H7z" />
+                            </svg>
+                            <span>My Activity</span>
+                        </a>
+
+                        <a href="Account/Manage" class="user-dropdown-item">
+                            <svg style="width: 18px; height: 18px; fill: #94a3b8;" viewBox="0 0 24 24">
+                                <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 3c1.66 0 3 1.34 3 3s-1.34 3-3 3-3-1.34-3-3 1.34-3 3-3zm0 14.2c-2.5 0-4.71-1.28-6-3.22.03-1.99 4-3.08 6-3.08 1.99 0 5.97 1.09 6 3.08-1.29 1.94-3.5 3.22-6 3.22z" />
+                            </svg>
+                            <span>Account Settings</span>
+                        </a>
+
+                        <div class="user-dropdown-divider"></div>
+
+                        <form method="post" action="/Account/Logout" class="logout-form">
+                            <AntiforgeryToken />
+                            @* Optional post-logout destination; the handler falls back to "/" when absent. *@
+                            <input type="hidden" name="ReturnUrl" value="@("/")" />
+                            <button type="submit" class="user-dropdown-item danger">
+                                <svg style="width: 18px; height: 18px; fill: #ef4444;" viewBox="0 0 24 24">
+                                    <path d="M17 7l-1.41 1.41L18.17 11H8v2h10.17l-2.58 2.58L17 17l5-5zM4 5h8V3H4c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h8v-2H4V5z" />
+                                </svg>
+                                <span>Logout</span>
+                            </button>
+                        </form>
+                    </div>
+                </details>
+            </Authorized>
+            <NotAuthorized>
+                <MudButton Variant="Variant.Outlined" Color="Color.Inherit" Href="Account/Login" Class="ml-2" Size="Size.Small" Style="color: #f8fafc; border-color: #384252;">
+                    Login
+                </MudButton>
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" Href="Account/Register" Class="ml-2" Size="Size.Small">
+                    Register
+                </MudButton>
+            </NotAuthorized>
+        </AuthorizeView>
+    </MudAppBar>
+
+    <MudMainContent Class="pa-4 pa-md-6" Style="min-height: 85vh; max-width: 1200px; margin: 0 auto; width: 100%;">
+        @if (_isBanned)
+        {
+            <MudAlert Severity="Severity.Error" Variant="Variant.Filled" Class="mb-4 rounded-lg" Icon="@Icons.Material.Filled.Gavel">
+                <strong>Your account is currently suspended @(_bannedUntil.HasValue ? $"until {_bannedUntil.Value.ToString("yyyy-MM-dd HH:mm UTC")}" : "permanently").</strong>
+                @if (!string.IsNullOrWhiteSpace(_banReason))
+                {
+                    <span class="ml-1">Reason: @_banReason</span>
+                }
+                <div style="font-size: 13px; opacity: 0.95; margin-top: 4px;">
+                    During this suspension, your voting and poll creation permissions are disabled.
+                </div>
+            </MudAlert>
+        }
+
+        @Body
+    </MudMainContent>
+
+    <MudDivider Style="border-color: rgba(255, 255, 255, 0.06);" Class="mt-8" />
+    <MudContainer MaxWidth="MaxWidth.Large" Class="py-3 text-center">
+        <MudText Typo="Typo.caption" Style="color: #64748b; font-size: 12px;">
+            Pdnode Vote
+        </MudText>
+    </MudContainer>
+</MudLayout>
+</CascadingValue>
+
+<div id="blazor-error-ui" data-nosnippet style="display: none;">
+    <div class="error-content">
+        <svg class="error-icon" viewBox="0 0 24 24">
+            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/>
+        </svg>
+        <span>An unhandled error has occurred.</span>
+        <a href="." class="reload">Reload</a>
+    </div>
+    <span class="dismiss" title="Dismiss">✕</span>
+</div>
+
+@code {
+    private static readonly ClaimsPrincipal Anonymous = new(new ClaimsIdentity());
+
+    [CascadingParameter]
+    private HttpContext? HttpContext { get; set; }
+
+    private Task<AuthenticationState> RequestAuthState =>
+        Task.FromResult(new AuthenticationState(HttpContext?.User ?? Anonymous));
+
+    private bool _isDarkMode = true;
+    private bool _isBanned = false;
+    private DateTime? _bannedUntil;
+    private string? _banReason;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await CheckBanStatusAsync();
+    }
+
+    private async Task CheckBanStatusAsync()
+    {
+        try
+        {
+            var user = HttpContext?.User;
+            if (user?.Identity?.IsAuthenticated == true)
+            {
+                var appUser = await UserManager.GetUserAsync(user);
+                if (appUser != null && appUser.IsCurrentlyBanned)
+                {
+                    _isBanned = true;
+                    _bannedUntil = appUser.BannedUntil;
+                    _banReason = appUser.BanReason;
+                }
+            }
+        }
+        catch
+        {
+            // Ignored if auth check fails on static prerender
+        }
+    }
+
+    // DaisyUI Dark Theme 经典黑灰配色体系（Base-100: #1d232a, Base-200: #2a323c, Base-300: #191e24）
+    private readonly MudTheme _customTheme = new()
+    {
+        PaletteLight = new PaletteLight
+        {
+            Primary = "#10b981",
+            Secondary = "#94a3b8",
+            Tertiary = "#a855f7",
+            AppbarBackground = "#191e24",
+            AppbarText = "#f8fafc",
+            Background = "#1d232a",
+            Surface = "#2a323c",
+            TextPrimary = "#f8fafc",
+            TextSecondary = "#94a3b8",
+            LinesDefault = "#384252",
+            Divider = "#384252",
+            ActionDefault = "#94a3b8",
+            Error = "#ef4444",
+            Success = "#10b981",
+            Warning = "#f59e0b",
+            Info = "#14b8a6"
+        },
+        PaletteDark = new PaletteDark
+        {
+            Primary = "#10b981",
+            Secondary = "#94a3b8",
+            Tertiary = "#38bdf8",
+            AppbarBackground = "#161a1f",
+            AppbarText = "#f8fafc",
+            Background = "#161a1f",
+            Surface = "#1e242d",
+            TextPrimary = "#f8fafc",
+            TextSecondary = "#94a3b8",
+            LinesDefault = "#28303d",
+            Divider = "#28303d",
+            ActionDefault = "#94a3b8",
+            Error = "#ef4444",
+            Success = "#10b981",
+            Warning = "#f59e0b",
+            Info = "#0ea5e9"
+        }
+    };
+}

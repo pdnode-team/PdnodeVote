@@ -1,0 +1,125 @@
+@using PdnodeVote.Client.Models
+@using PdnodeVote.Client.Services
+@inject IPollApiClient PollApi
+@inject ISnackbar Snackbar
+
+<MudDialog Style="background-color: #1e242c; color: #f8fafc; border: 1px solid rgba(255,255,255,0.1); border-radius: 12px; max-width: 440px; width: 100%;">
+    <TitleContent>
+        <div class="d-flex align-center gap-2">
+            <MudIcon Icon="@Icons.Material.Filled.Flag" Style="color: #ef4444;" />
+            <MudText Typo="Typo.h6" Style="font-size: 16px; font-weight: 700; color: #f8fafc;">
+                Report Content
+            </MudText>
+        </div>
+    </TitleContent>
+    <DialogContent>
+        @if (!string.IsNullOrEmpty(ContentTitle))
+        {
+            <div style="font-size: 13px; color: #94a3b8; margin-bottom: 12px; padding: 6px 10px; background: rgba(0,0,0,0.2); border-radius: 6px;">
+                Reporting: <strong style="color: #f1f5f9;">@ContentTitle</strong>
+            </div>
+        }
+
+        <MudText Typo="Typo.caption" Style="color: #94a3b8; font-weight: 600;">Reason for reporting</MudText>
+        <MudRadioGroup @bind-Value="_selectedReason" Class="my-2">
+            <MudRadio Value="@("Spam or Advertising")" Color="Color.Error" Dense="true" Class="my-1">
+                <span style="font-size: 13px; color: #f1f5f9;">Spam or Advertising</span>
+            </MudRadio>
+            <MudRadio Value="@("Harassment or Hate Speech")" Color="Color.Error" Dense="true" Class="my-1">
+                <span style="font-size: 13px; color: #f1f5f9;">Harassment or Hate Speech</span>
+            </MudRadio>
+            <MudRadio Value="@("Misinformation or Fraud")" Color="Color.Error" Dense="true" Class="my-1">
+                <span style="font-size: 13px; color: #f1f5f9;">Misinformation or Fraud</span>
+            </MudRadio>
+            <MudRadio Value="@("Inappropriate / NSFW Content")" Color="Color.Error" Dense="true" Class="my-1">
+                <span style="font-size: 13px; color: #f1f5f9;">Inappropriate / NSFW Content</span>
+            </MudRadio>
+            <MudRadio Value="@("Other")" Color="Color.Error" Dense="true" Class="my-1">
+                <span style="font-size: 13px; color: #f1f5f9;">Other Violation</span>
+            </MudRadio>
+        </MudRadioGroup>
+
+        <MudTextField @bind-Value="_details"
+                      Label="Additional Details (Optional)"
+                      Variant="Variant.Outlined"
+                      Lines="3"
+                      Margin="Margin.Dense"
+                      Class="mt-2"
+                      Placeholder="Provide context to help moderators understand the issue..."
+                      Style="font-size: 13px; color: #e2e8f0; background: rgba(0,0,0,0.2);" />
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel" Style="color: #94a3b8; text-transform: none;">Cancel</MudButton>
+        <MudButton Variant="Variant.Filled"
+                   Color="Color.Error"
+                   Disabled="@(string.IsNullOrEmpty(_selectedReason) || _submitting)"
+                   OnClick="SubmitReport"
+                   Style="font-weight: 600; text-transform: none; border-radius: 6px;">
+            @if (_submitting)
+            {
+                <MudProgressCircular Indeterminate="true" Size="Size.Small" Class="mr-1" />
+                <span>Submitting...</span>
+            }
+            else
+            {
+                <span>Submit Report</span>
+            }
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter]
+    private IMudDialogInstance MudDialog { get; set; } = default!;
+
+    [Parameter]
+    public int? PollId { get; set; }
+
+    [Parameter]
+    public int? CommentId { get; set; }
+
+    [Parameter]
+    public string? ContentTitle { get; set; }
+
+    private string _selectedReason = "Spam or Advertising";
+    private string? _details;
+    private bool _submitting;
+
+    private async Task SubmitReport()
+    {
+        if (string.IsNullOrWhiteSpace(_selectedReason) || _submitting) return;
+
+        try
+        {
+            _submitting = true;
+            var req = new SubmitReportRequest
+            {
+                PollId = PollId,
+                CommentId = CommentId,
+                Reason = _selectedReason,
+                Details = _details?.Trim()
+            };
+
+            var res = await PollApi.SubmitReportAsync(req);
+            if (res.Success)
+            {
+                Snackbar.Add("Thank you. The report has been sent to moderators for review.", Severity.Success);
+                MudDialog.Close(DialogResult.Ok(true));
+            }
+            else
+            {
+                Snackbar.Add(res.Message ?? "Failed to submit report.", Severity.Error);
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _submitting = false;
+        }
+    }
+
+    private void Cancel() => MudDialog.Cancel();
+}

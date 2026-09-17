@@ -1,0 +1,31 @@
+@using Microsoft.AspNetCore.Identity
+@using PdnodeVote.Data
+
+@inject SignInManager<ApplicationUser> SignInManager
+
+<div class="list-group rounded-3 overflow-hidden" style="background-color: #1e242d; border: 1px solid rgba(255, 255, 255, 0.08) !important;">
+    <NavLink class="list-group-item list-group-item-action py-3 d-flex align-items-center profile-nav-item" href="Account/Manage" Match="NavLinkMatch.All">
+        <i class="bi bi-person-circle me-3 fs-5 profile-nav-icon"></i>
+        <span>Profile</span>
+    </NavLink>
+    <NavLink class="list-group-item list-group-item-action py-3 d-flex align-items-center profile-nav-item" href="Account/Manage/Email">
+        <i class="bi bi-envelope me-3 fs-5 profile-nav-icon"></i>
+        <span>Email</span>
+    </NavLink>
+    <NavLink class="list-group-item list-group-item-action py-3 d-flex align-items-center profile-nav-item" href="Account/Manage/ChangePassword">
+        <i class="bi bi-shield-lock me-3 fs-5 profile-nav-icon"></i>
+        <span>Password</span>
+    </NavLink>
+    <NavLink class="list-group-item list-group-item-action py-3 d-flex align-items-center profile-nav-item" href="Account/Manage/Passkeys">
+        <i class="bi bi-fingerprint me-3 fs-5 profile-nav-icon"></i>
+        <span>Passkeys</span>
+    </NavLink>
+    <NavLink class="list-group-item list-group-item-action py-3 d-flex align-items-center profile-nav-item" href="Account/Manage/TwoFactorAuthentication">
+        <i class="bi bi-shield-check me-3 fs-5 profile-nav-icon"></i>
+        <span>Two-Factor Auth</span>
+    </NavLink>
+    <a class="list-group-item list-group-item-action py-3 d-flex align-items-center profile-nav-item text-danger" href="Account/Logout">
+        <i class="bi bi-box-arrow-right me-3 fs-5 profile-nav-logout-icon"></i>
+        <span>Log Out</span>
+    </a>
+</div>

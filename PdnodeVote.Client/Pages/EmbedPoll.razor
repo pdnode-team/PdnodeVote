@@ -1,0 +1,373 @@
+@page "/embed/poll/{Id:int}"
+@layout EmbedLayout
+@rendermode InteractiveAuto
+@using PdnodeVote.Client.Models
+@using PdnodeVote.Client.Services
+@inject IPollApiClient PollApi
+@inject ISnackbar Snackbar
+@inject NavigationManager Navigation
+
+<div class="embed-poll-card">
+    @if (_loading)
+    {
+        <div class="d-flex justify-center align-center" style="height: 200px;">
+            <MudProgressCircular Indeterminate="true" Color="Color.Primary" Size="Size.Small" />
+        </div>
+    }
+    else if (_poll == null)
+    {
+        <div class="text-center py-8" style="color: #94a3b8;">
+            <MudIcon Icon="@Icons.Material.Filled.SearchOff" Size="Size.Large" Style="opacity: 0.5;" />
+            <div style="font-size: 14px; margin-top: 8px;">Poll not found or unavailable.</div>
+        </div>
+    }
+    else
+    {
+        <!-- Header -->
+        <div class="d-flex align-center justify-space-between mb-2">
+            @if (!string.IsNullOrEmpty(_poll.CategoryName))
+            {
+                <span class="category-badge">@_poll.CategoryName</span>
+            }
+            <span class="voter-count">
+                <MudIcon Icon="@Icons.Material.Filled.People" Size="Size.Small" Style="font-size: 14px; vertical-align: -2px;" />
+                @_poll.TotalParticipants votes
+            </span>
+        </div>
+
+        <h3 class="poll-title">@_poll.Title</h3>
+
+        @if (!string.IsNullOrWhiteSpace(_poll.Description))
+        {
+            <p class="poll-description">@_poll.Description</p>
+        }
+
+        <!-- Options / Voting View -->
+        <div class="options-container my-3">
+            @foreach (var opt in _poll.Options)
+            {
+                bool isSelected = _selectedOptionIds.Contains(opt.Id);
+                // IsVotingOpen already folds in "not Approved" and "already voted", so the vote
+                // button and option toggling can rely on it instead of only checking HasCurrentUserVoted.
+                // Results are also shown once the poll has closed, so non-voters see the final outcome.
+                bool showResults = ResultsAreVisible();
+
+                <div class="option-row @(isSelected ? "selected" : "") @(showResults ? "results-view" : "selectable")"
+                     @onclick="@(() => ToggleOption(opt.Id))">
+                    
+                    @if (showResults)
+                    {
+                        <!-- Percentage bar background -->
+                        <div class="option-progress" style="width: @(opt.Percentage)%"></div>
+                    }
+
+                    <div class="option-content">
+                        <div class="d-flex align-center gap-2">
+                            @if (!showResults)
+                            {
+                                <div class="choice-indicator @(isSelected ? "checked" : "")">
+                                    @if (isSelected)
+                                    {
+                                        <MudIcon Icon="@Icons.Material.Filled.Check" Size="Size.Small" Style="font-size: 12px; color: #fff;" />
+                                    }
+                                </div>
+                            }
+                            <span class="option-text">@opt.Text</span>
+                        </div>
+
+                        @if (showResults)
+                        {
+                            <div class="d-flex align-center gap-2">
+                                <span class="vote-stat">@opt.VoteCount (@opt.Percentage%)</span>
+                                @if (_poll.UserVotedOptionIds.Contains(opt.Id) || _selectedOptionIds.Contains(opt.Id))
+                                {
+                                    <span class="my-vote-badge">Your Vote</span>
+                                }
+                            </div>
+                        }
+                    </div>
+                </div>
+            }
+        </div>
+
+        <!-- Action / Footer -->
+        <div class="d-flex align-center justify-space-between mt-3 pt-2" style="border-top: 1px solid rgba(255,255,255,0.06);">
+            @if (IsVotingOpen())
+            {
+                <MudButton Variant="Variant.Filled"
+                           Color="Color.Primary"
+                           Size="Size.Small"
+                           Disabled="@(_selectedOptionIds.Count == 0 || _voting)"
+                           OnClick="SubmitVote"
+                           Style="font-weight: 600; text-transform: none; border-radius: 6px;">
+                    @if (_voting)
+                    {
+                        <MudProgressCircular Indeterminate="true" Size="Size.Small" Class="mr-1" />
+                        <span>Voting...</span>
+                    }
+                    else
+                    {
+                        <span>Vote</span>
+                    }
+                </MudButton>
+            }
+            else
+            {
+                <span style="font-size: 12px; color: #10b981; font-weight: 500;">
+                    <MudIcon Icon="@Icons.Material.Filled.CheckCircle" Size="Size.Small" Style="font-size: 14px; vertical-align: -2px;" />
+                    Vote recorded
+                </span>
+            }
+
+            <a href="@($"/poll/{Id}")" target="_blank" class="brand-link">
+                <span>View on Pdnode Vote</span>
+                <MudIcon Icon="@Icons.Material.Filled.OpenInNew" Size="Size.Small" Style="font-size: 13px;" />
+            </a>
+        </div>
+    }
+</div>
+
+<style>
+    .embed-poll-card {
+        background-color: #1e242c;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 12px;
+        padding: 16px;
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+        color: #f8fafc;
+        max-width: 540px;
+        margin: 0 auto;
+    }
+    .category-badge {
+        font-size: 11px;
+        font-weight: 600;
+        padding: 2px 8px;
+        border-radius: 9999px;
+        background-color: rgba(16, 185, 129, 0.15);
+        color: #10b981;
+    }
+    .voter-count {
+        font-size: 12px;
+        color: #64748b;
+    }
+    .poll-title {
+        font-size: 16px;
+        font-weight: 700;
+        letter-spacing: -0.02em;
+        margin: 4px 0 6px 0;
+        color: #f1f5f9;
+        line-height: 1.35;
+    }
+    .poll-description {
+        font-size: 13px;
+        color: #94a3b8;
+        line-height: 1.45;
+        margin: 0 0 10px 0;
+    }
+    .option-row {
+        position: relative;
+        background-color: rgba(255, 255, 255, 0.03);
+        border: 1px solid rgba(255, 255, 255, 0.07);
+        border-radius: 8px;
+        margin-bottom: 8px;
+        overflow: hidden;
+        transition: all 0.15s ease;
+    }
+    .option-row.selectable {
+        cursor: pointer;
+    }
+    .option-row.selectable:hover {
+        background-color: rgba(255, 255, 255, 0.06);
+        border-color: rgba(255, 255, 255, 0.15);
+    }
+    .option-row.selected {
+        border-color: #10b981;
+        background-color: rgba(16, 185, 129, 0.08);
+    }
+    .option-progress {
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        left: 0;
+        background-color: rgba(16, 185, 129, 0.18);
+        transition: width 0.4s ease;
+    }
+    .option-content {
+        position: relative;
+        z-index: 1;
+        padding: 10px 12px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+    }
+    .choice-indicator {
+        width: 18px;
+        height: 18px;
+        border-radius: 4px;
+        border: 1.5px solid rgba(255, 255, 255, 0.3);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+    }
+    .choice-indicator.checked {
+        background-color: #10b981;
+        border-color: #10b981;
+    }
+    .option-text {
+        font-size: 13px;
+        font-weight: 500;
+        color: #f1f5f9;
+    }
+    .vote-stat {
+        font-size: 12px;
+        font-weight: 600;
+        color: #94a3b8;
+    }
+    .my-vote-badge {
+        font-size: 10px;
+        font-weight: 700;
+        background-color: #10b981;
+        color: #fff;
+        padding: 1px 5px;
+        border-radius: 4px;
+    }
+    .brand-link {
+        font-size: 12px;
+        color: #64748b;
+        text-decoration: none;
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        transition: color 0.15s ease;
+    }
+    .brand-link:hover {
+        color: #10b981;
+    }
+</style>
+
+@code {
+    [Parameter]
+    public int Id { get; set; }
+
+    private PollDetailDto? _poll;
+    private bool _loading = true;
+    private bool _voting;
+    private bool _votedJustNow;
+    private List<int> _selectedOptionIds = new();
+    private int _loadedPollId = -1;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadPollAsync();
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        // Same lifecycle trap as PollDetail: the instance is reused when only the route parameter
+        // changes, so the embed must reload rather than keep rendering the previous poll.
+        if (_loadedPollId == Id) return;
+
+        _loadedPollId = Id;
+        _poll = null;
+        _selectedOptionIds = new();
+        _votedJustNow = false;
+        await LoadPollAsync();
+    }
+
+    /// <summary>True while the poll accepts votes: approved, not expired, and not already voted.</summary>
+    private bool IsVotingOpen() =>
+        _poll != null
+        && _poll.Status == PollStatus.Approved
+        && !_poll.IsExpired
+        && !_poll.HasCurrentUserVoted
+        && !_votedJustNow;
+
+    /// <summary>
+    /// Results are visible to someone who voted, or once the poll can no longer be voted on (expired),
+    /// or when the poll is configured AlwaysPublic. Previously an expired AfterVoting poll never showed
+    /// its final result to a non-voter, while a Removed/Archived poll showed a live Vote button.
+    /// </summary>
+    private bool ResultsAreVisible() =>
+        _poll != null
+        && (_poll.HasCurrentUserVoted
+            || _votedJustNow
+            || _poll.IsExpired
+            || _poll.ResultsVisible);
+
+    private async Task LoadPollAsync()
+    {
+        try
+        {
+            _loading = true;
+            var requestedId = Id;
+            var poll = await PollApi.GetPollDetailAsync(requestedId);
+            if (_loadedPollId == requestedId)
+            {
+                _poll = poll;
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Failed to load poll: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private void ToggleOption(int optionId)
+    {
+        if (!IsVotingOpen() || _poll is null) return;
+
+        if (_poll.IsMultipleChoice)
+        {
+            if (_selectedOptionIds.Contains(optionId))
+            {
+                _selectedOptionIds.Remove(optionId);
+            }
+            else
+            {
+                if (_poll.MaxChoices <= 0 || _selectedOptionIds.Count < _poll.MaxChoices)
+                {
+                    _selectedOptionIds.Add(optionId);
+                }
+            }
+        }
+        else
+        {
+            _selectedOptionIds.Clear();
+            _selectedOptionIds.Add(optionId);
+        }
+    }
+
+    private async Task SubmitVote()
+    {
+        if (!IsVotingOpen() || _selectedOptionIds.Count == 0 || _voting) return;
+
+        try
+        {
+            _voting = true;
+            var res = await PollApi.CastVoteAsync(Id, _selectedOptionIds);
+            if (res.Success)
+            {
+                _votedJustNow = true;
+                await LoadPollAsync();
+                Snackbar.Add("Vote cast successfully!", Severity.Success);
+            }
+            else
+            {
+                Snackbar.Add(res.Message ?? "Vote failed", Severity.Error);
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Vote failed: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _voting = false;
+        }
+    }
+}

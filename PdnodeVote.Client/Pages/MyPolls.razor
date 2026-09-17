@@ -1,0 +1,315 @@
+@page "/my-polls"
+@rendermode InteractiveAuto
+@attribute [Authorize]
+@inject IPollApiClient PollApi
+@inject ISnackbar Snackbar
+@inject NavigationManager NavigationManager
+@inject ApiErrorState ApiErrors
+
+<PageTitle>My Polls - Pdnode Vote</PageTitle>
+
+<InteractiveMudProviders />
+
+
+<MudContainer MaxWidth="MaxWidth.Medium" Class="my-6">
+    <div class="d-flex justify-space-between align-center mb-6">
+        <div>
+            <h1 style="font-size: 26px; font-weight: 700; color: #f8fafc; margin: 0 0 4px 0; letter-spacing: -0.025em;">
+                My Polls
+            </h1>
+            <div style="font-size: 14px; color: #94a3b8;">
+                Track your posted questions, review feedback, and manage community participation
+            </div>
+        </div>
+        <MudButton Variant="Variant.Filled"
+                   Color="Color.Primary"
+                   StartIcon="@Icons.Material.Filled.Add"
+                   Href="/create-poll"
+                   Style="font-weight: 600; padding: 8px 18px; border-radius: 8px; text-transform: none; font-size: 14px;">
+            Create Poll
+        </MudButton>
+    </div>
+
+    @if (_isLoading)
+    {
+        <div class="d-flex justify-center my-12">
+            <MudProgressCircular Color="Color.Primary" Indeterminate="true" Size="Size.Medium" />
+        </div>
+    }
+    else if (_userPolls.Count == 0)
+    {
+        <div class="text-center py-12 px-4 rounded-xl" style="background-color: #1a2027; border: 1px dashed rgba(255,255,255,0.1);">
+            <MudIcon Icon="@Icons.Material.Outlined.Poll" Style="font-size: 3rem; color: #64748b;" />
+            <h3 style="font-size: 18px; font-weight: 600; color: #f8fafc; margin-top: 12px; margin-bottom: 6px;">You haven't created any polls yet</h3>
+            <p style="font-size: 14px; color: #94a3b8; margin-bottom: 20px;">Start your first topic and discover what the community thinks.</p>
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" Href="/create-poll" StartIcon="@Icons.Material.Filled.Add" Style="text-transform: none; border-radius: 8px;">
+                Create Your First Poll
+            </MudButton>
+        </div>
+    }
+    else
+    {
+        <div class="d-flex flex-column gap-3">
+            @foreach (var poll in _userPolls)
+            {
+                <div class="poll-feed-card" style="cursor: default;">
+                    <div class="d-flex flex-column flex-sm-row justify-space-between align-sm-center gap-2 mb-3">
+                        <div class="d-flex align-center flex-wrap gap-2">
+                            @switch (poll.Status)
+                            {
+                                case PollStatus.Approved:
+                                    <span class="status-pill active">Active</span>
+                                    break;
+                                case PollStatus.PendingReview:
+                                    <span class="status-pill" style="background-color: rgba(245, 158, 11, 0.12); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.25);">Under Review</span>
+                                    break;
+                                case PollStatus.ReturnedForRevision:
+                                    <span class="status-pill" style="background-color: rgba(239, 68, 68, 0.12); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.25);">Revision Required</span>
+                                    break;
+                                case PollStatus.Removed:
+                                    <span class="status-pill" style="background-color: rgba(239, 68, 68, 0.12); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.25);">Removed</span>
+                                    break;
+                                case PollStatus.Archived:
+                                    <span class="status-pill expired">Archived</span>
+                                    break;
+                            }
+
+                            @if (poll.IsPinned)
+                            {
+                                <span class="status-pill pinned">Pinned</span>
+                            }
+
+                            <span class="meta-dot"></span>
+                            <span style="font-size: 12px; color: #64748b;">
+                                Created @poll.CreatedAt.ToLocalTime().ToString("MMM dd, yyyy HH:mm")
+                            </span>
+                        </div>
+
+                        <div class="d-flex align-center gap-2">
+                            @if (poll.Status == PollStatus.ReturnedForRevision)
+                            {
+                                <MudButton Variant="Variant.Filled" Color="Color.Warning" Size="Size.Small" StartIcon="@Icons.Material.Filled.Edit" OnClick="@(() => OpenEditDialog(poll.Id))" Style="text-transform: none; border-radius: 6px; font-size: 12px;">
+                                    Edit & Resubmit
+                                </MudButton>
+                            }
+
+                            <MudButton Variant="Variant.Outlined" Color="Color.Default" Size="Size.Small" Href="@($"/poll/{poll.Id}")" Style="text-transform: none; border-radius: 6px; font-size: 12px; border-color: rgba(255,255,255,0.12); color: #cbd5e1;">
+                                View
+                            </MudButton>
+
+                            @if (_deletingPollId == poll.Id)
+                            {
+                                <MudProgressCircular Size="Size.Small" Color="Color.Error" Indeterminate="true" />
+                            }
+                            else
+                            {
+                                <MudIconButton Icon="@Icons.Material.Filled.DeleteOutline" Color="Color.Error" Size="Size.Small" OnClick="@(() => DeletePollAsync(poll.Id))" Disabled="@(_deletingPollId.HasValue)" title="Delete Poll" />
+                            }
+                        </div>
+                    </div>
+
+                    <a href="/poll/@poll.Id" style="color: #f8fafc; text-decoration: none;">
+                        <div class="poll-card-title" style="margin-bottom: 6px;">
+                            @poll.Title
+                        </div>
+                    </a>
+
+                    @if (poll.Status == PollStatus.ReturnedForRevision && !string.IsNullOrWhiteSpace(poll.ModerationReason))
+                    {
+                        <div class="pa-3 rounded-lg my-2" style="background-color: rgba(245, 158, 11, 0.1); border: 1px solid rgba(245, 158, 11, 0.25); color: #fde68a; font-size: 13px;">
+                            <strong>Feedback:</strong> @poll.ModerationReason
+                        </div>
+                    }
+                    else if (poll.Status == PollStatus.Removed && !string.IsNullOrWhiteSpace(poll.ModerationReason))
+                    {
+                        <div class="pa-3 rounded-lg my-2" style="background-color: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.25); color: #fca5a5; font-size: 13px;">
+                            <strong>Removal:</strong> @poll.ModerationReason
+                        </div>
+                    }
+
+                    @if (!string.IsNullOrWhiteSpace(poll.Description))
+                    {
+                        <div class="poll-card-desc mb-2">
+                            @poll.Description
+                        </div>
+                    }
+
+                    <div class="poll-card-footer mt-2">
+                        <div class="poll-metrics">
+                            <span>@poll.ParticipantCount votes</span>
+                            <span class="meta-dot"></span>
+                            <span>@poll.OptionCount options</span>
+                        </div>
+                    </div>
+                </div>
+            }
+        </div>
+    }
+</MudContainer>
+
+<!-- Dialog: Edit & Resubmit Poll -->
+<MudDialog @bind-Visible="_showEditDialog" Options="_dialogOptions">
+    <TitleContent>
+        <MudText Typo="Typo.h6">Edit & Resubmit Poll</MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudTextField @bind-Value="_editTitle" Label="Poll Title" Required="true" Variant="Variant.Outlined" Class="mb-3" />
+        <MudTextField @bind-Value="_editDescription" Label="Description (Optional)" Lines="3" Variant="Variant.Outlined" Class="mb-4" />
+
+        <MudText Typo="Typo.subtitle2" Class="font-weight-bold mb-2">Options (At least 2 required)</MudText>
+        @for (int i = 0; i < _editOptions.Count; i++)
+        {
+            var index = i;
+            <div class="d-flex align-center gap-2 mb-2">
+                <MudTextField @bind-Value="_editOptions[index]" Label="@($"Option {index + 1}")" Variant="Variant.Outlined" Margin="Margin.Dense" Class="flex-grow-1" />
+                @if (_editOptions.Count > 2)
+                {
+                    <MudIconButton Icon="@Icons.Material.Filled.Close" Color="Color.Error" Size="Size.Small" OnClick="@(() => _editOptions.RemoveAt(index))" />
+                }
+            </div>
+        }
+
+        <MudButton Variant="Variant.Outlined" Color="Color.Primary" Size="Size.Small" StartIcon="@Icons.Material.Filled.Add" OnClick="@(() => _editOptions.Add(string.Empty))" Class="mt-1">
+            Add Option
+        </MudButton>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="@(() => _showEditDialog = false)" Disabled="_isResubmitting">Cancel</MudButton>
+        <MudButton Color="Color.Success" Variant="Variant.Filled" OnClick="ConfirmResubmitAsync" Disabled="_isResubmitting">
+            @if (_isResubmitting)
+            {
+                <MudProgressCircular Class="ms-n1" Size="Size.Small" Indeterminate="true" />
+                <span class="ms-2">Saving...</span>
+            }
+            else
+            {
+                <span>Save & Resubmit for Review</span>
+            }
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    private bool _isLoading = true;
+    private bool _isResubmitting = false;
+    private int? _deletingPollId = null;
+    private List<PollListItemDto> _userPolls = new();
+
+    // Edit Dialog state
+    private readonly DialogOptions _dialogOptions = new() { MaxWidth = MaxWidth.Small, FullWidth = true, CloseButton = true };
+    private bool _showEditDialog;
+    private int _editingPollId;
+    private string _editTitle = string.Empty;
+    private string? _editDescription;
+    private List<string> _editOptions = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadUserPollsAsync();
+        _isLoading = false;
+    }
+
+    private async Task LoadUserPollsAsync()
+    {
+        // Lets the error banner offer a retry instead of showing "you haven't created any polls yet"
+        // when the request actually failed.
+        ApiErrors.Retry = async () =>
+        {
+            await LoadUserPollsAsync();
+            StateHasChanged();
+        };
+        _userPolls = await PollApi.GetUserPollsAsync();
+    }
+
+    private async Task OpenEditDialog(int pollId)
+    {
+        var detail = await PollApi.GetPollDetailAsync(pollId);
+        if (detail == null)
+        {
+            Snackbar.Add("Could not load poll details.", Severity.Error);
+            return;
+        }
+
+        _editingPollId = pollId;
+        _editTitle = detail.Title;
+        _editDescription = detail.Description;
+        _editOptions = detail.Options.Select(o => o.Text).ToList();
+        if (_editOptions.Count < 2)
+        {
+            while (_editOptions.Count < 2) _editOptions.Add(string.Empty);
+        }
+        _showEditDialog = true;
+    }
+
+    private async Task ConfirmResubmitAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_editTitle))
+        {
+            Snackbar.Add("Poll title cannot be empty.", Severity.Warning);
+            return;
+        }
+
+        var validOptions = _editOptions.Where(o => !string.IsNullOrWhiteSpace(o)).ToList();
+        if (validOptions.Count < 2)
+        {
+            Snackbar.Add("At least 2 non-empty options are required.", Severity.Warning);
+            return;
+        }
+
+        _isResubmitting = true;
+        try
+        {
+            var res = await PollApi.ResubmitPollAsync(_editingPollId, new ResubmitPollRequest
+            {
+                Title = _editTitle,
+                Description = _editDescription,
+                Options = validOptions
+            });
+            _showEditDialog = false;
+
+            if (res.Success)
+            {
+                Snackbar.Add(res.Message, Severity.Success);
+                await LoadUserPollsAsync();
+            }
+            else
+            {
+                Snackbar.Add(res.Message, Severity.Error);
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Resubmit error: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isResubmitting = false;
+        }
+    }
+
+    private async Task DeletePollAsync(int pollId)
+    {
+        _deletingPollId = pollId;
+        try
+        {
+            var res = await PollApi.DeletePollAsync(pollId);
+            if (res.Success)
+            {
+                Snackbar.Add(res.Message, Severity.Success);
+                await LoadUserPollsAsync();
+            }
+            else
+            {
+                Snackbar.Add(res.Message, Severity.Error);
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Delete failed: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _deletingPollId = null;
+        }
+    }
+}

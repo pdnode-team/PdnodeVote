@@ -1,0 +1,75 @@
+@implements IDisposable
+@inject ApiErrorState ApiErrors
+
+@if (ApiErrors.HasError)
+{
+    <div class="api-error-banner" role="alert">
+        <MudIcon Icon="@Icons.Material.Filled.CloudOff" Size="Size.Small" Style="color: #fca5a5; flex-shrink: 0;" />
+        <div class="api-error-text">
+            <strong>Couldn't load @ApiErrors.Context.</strong>
+            <span>Reason: @ApiErrors.Message.</span>
+        </div>
+        @if (ApiErrors.Retry is not null)
+        {
+            <MudButton Variant="Variant.Text" Size="Size.Small" OnClick="RetryAsync"
+                       Style="color: #34d399; font-weight: 600; text-transform: none;">
+                Retry
+            </MudButton>
+        }
+        <MudIconButton Icon="@Icons.Material.Filled.Close" Size="Size.Small" OnClick="Dismiss"
+                       Style="color: #94a3b8;" aria-label="Dismiss" />
+    </div>
+}
+
+<style>
+    .api-error-banner {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 10px 16px;
+        background-color: rgba(239, 68, 68, 0.12);
+        border-bottom: 1px solid rgba(239, 68, 68, 0.4);
+        color: #fca5a5;
+        font-size: 13px;
+    }
+
+    .api-error-text {
+        display: flex;
+        gap: 6px;
+        flex-wrap: wrap;
+        flex: 1;
+        min-width: 0;
+    }
+
+    .api-error-text strong { color: #fecaca; }
+    .api-error-text span { color: #fca5a5; opacity: 0.9; }
+</style>
+
+@code {
+    private bool _retrying;
+
+    protected override void OnInitialized() => ApiErrors.Changed += OnApiErrorsChanged;
+
+    private void OnApiErrorsChanged() => InvokeAsync(StateHasChanged);
+
+    private async Task RetryAsync()
+    {
+        var retry = ApiErrors.Retry;
+        if (retry is null || _retrying) return;
+
+        try
+        {
+            _retrying = true;
+            ApiErrors.Clear();
+            await retry();
+        }
+        finally
+        {
+            _retrying = false;
+        }
+    }
+
+    private void Dismiss() => ApiErrors.Clear();
+
+    public void Dispose() => ApiErrors.Changed -= OnApiErrorsChanged;
+}

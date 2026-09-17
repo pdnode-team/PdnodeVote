@@ -1,0 +1,608 @@
+@using PdnodeVote.Client.Models
+@inject IPollApiClient PollApi
+@inject ISnackbar Snackbar
+@inject NavigationManager NavigationManager
+@inject IDialogService DialogService
+
+<div class="rounded-xl pa-5 pa-md-7 mb-6" style="background-color: #1e242d; border: 1px solid rgba(255, 255, 255, 0.08);">
+    <div class="d-flex align-center justify-space-between flex-wrap gap-2 mb-4">
+        <div class="d-flex align-center gap-2">
+            <MudIcon Icon="@Icons.Material.Filled.Forum" Color="Color.Primary" />
+            <h2 style="font-size: 18px; font-weight: 700; color: #f8fafc; margin: 0;">
+                Discussion (@TotalCommentsCount)
+            </h2>
+        </div>
+
+        <!-- Sort Tabs -->
+        <div class="d-flex align-center gap-1 sort-tabs-wrap">
+            <button class="sort-tab @(_sortMode == "hot" ? "active" : "")" @onclick="@(() => SetSortMode("hot"))">
+                Hot
+            </button>
+            <button class="sort-tab @(_sortMode == "newest" ? "active" : "")" @onclick="@(() => SetSortMode("newest"))">
+                Newest
+            </button>
+        </div>
+    </div>
+
+    <!-- Comment Input Form -->
+    @if (!IsLoggedIn)
+    {
+        <div class="text-center py-6 px-4 rounded-lg mb-6" style="background-color: #161a1f; border: 1px solid rgba(255, 255, 255, 0.06);">
+            <p style="color: #cbd5e1; font-size: 14px; margin-bottom: 16px;">Log in to join the discussion.</p>
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Medium" Href="@($"/Account/Login?returnUrl=/poll/{PollId}")" Style="text-transform: none; border-radius: 8px;">
+                Log In to Comment
+            </MudButton>
+        </div>
+    }
+    else
+    {
+        <div class="pa-4 rounded-lg mb-6" style="background-color: #161a1f; border: 1px solid rgba(255, 255, 255, 0.06);">
+            <MudTextField @bind-Value="_newCommentContent"
+                          Placeholder="Share your perspective (Plain text only, max 1000 chars)..."
+                          Variant="Variant.Outlined"
+                          Lines="3"
+                          MaxLength="1000"
+                          Counter="1000"
+                          Disabled="_isPostingComment"
+                          Class="mb-3" />
+
+            <div class="d-flex @(CommentsRequireModeration ? "flex-column flex-sm-row justify-space-between align-sm-center gap-2" : "justify-end")">
+                @if (CommentsRequireModeration)
+                {
+                    <div style="font-size: 12px; color: #94a3b8;">
+                        Your comment will be reviewed before it is published.
+                    </div>
+                }
+                <MudButton Variant="Variant.Filled"
+                           Color="Color.Primary"
+                           StartIcon="@Icons.Material.Filled.Send"
+                           OnClick="@(() => PostCommentAsync())"
+                           Disabled="@(string.IsNullOrWhiteSpace(_newCommentContent) || _isPostingComment)"
+                           Size="Size.Small"
+                           Style="text-transform: none; font-weight: 600; padding: 6px 18px; border-radius: 8px;">
+                    @if (_isPostingComment)
+                    {
+                        <MudProgressCircular Class="ms-n1 me-2" Size="Size.Small" Indeterminate="true" />
+                        <span>Posting...</span>
+                    }
+                    else
+                    {
+                        <span>Post Comment</span>
+                    }
+                </MudButton>
+            </div>
+        </div>
+    }
+
+    <!-- Comments List -->
+    @if (SortedComments.Count == 0)
+    {
+        <div class="text-center py-8" style="color: #64748b; font-size: 14px;">
+            <MudIcon Icon="@Icons.Material.Outlined.ChatBubbleOutline" Style="font-size: 2rem; opacity: 0.5; margin-bottom: 6px;" />
+            <div>No comments yet. Be the first to share your thoughts!</div>
+        </div>
+    }
+    else
+    {
+        <div class="d-flex flex-column gap-4">
+            @foreach (var comment in SortedComments)
+            {
+                <div class="pa-4 rounded-lg @(comment.IsPinned ? "comment-pinned" : "")" style="background-color: #161a1f; border: 1px solid rgba(255, 255, 255, 0.05);">
+                    <!-- Comment Header -->
+                    <div class="d-flex align-center justify-space-between mb-2">
+                        <div class="d-flex align-center flex-wrap gap-2">
+                            @if (comment.IsPinned)
+                            {
+                                <span class="pinned-badge">
+                                    <svg style="width: 10px; height: 10px; fill: currentColor; margin-right: 3px;" viewBox="0 0 24 24">
+                                        <path d="M16 12V4h1V2H7v2h1v8l-2 2v2h5.2v6h1.6v-6H18v-2l-2-2z" />
+                                    </svg>
+                                    Pinned
+                                </span>
+                            }
+
+                            <a href="@($"/user/{comment.UserName}")" style="font-weight: 600; font-size: 14px; color: #f8fafc; text-decoration: none;">
+                                @comment.UserName
+                            </a>
+
+                            <UserLevelBadge Level="comment.UserLevel" ShowShort="true" />
+
+                            @if (!string.IsNullOrEmpty(comment.UserRoleBadge))
+                            {
+                                var badgeBg = comment.UserRoleBadge == "Admin" ? "rgba(239, 68, 68, 0.15)" :
+                                              comment.UserRoleBadge == "SuperModerator" ? "rgba(168, 85, 247, 0.15)" : "rgba(16, 185, 129, 0.15)";
+                                var badgeColor = comment.UserRoleBadge == "Admin" ? "#ef4444" :
+                                                comment.UserRoleBadge == "SuperModerator" ? "#c084fc" : "#10b981";
+                                var badgeLabel = comment.UserRoleBadge == "Admin" ? "Admin" :
+                                                comment.UserRoleBadge == "SuperModerator" ? "Super Mod" : "Mod";
+                                <span style="font-size: 11px; font-weight: 600; padding: 1px 6px; border-radius: 4px; background: @badgeBg; color: @badgeColor;">
+                                    @badgeLabel
+                                </span>
+                            }
+
+                            @if (comment.Status == 1)
+                            {
+                                <span style="font-size: 11px; padding: 1px 6px; border-radius: 4px; background: rgba(245, 158, 11, 0.15); color: #f59e0b;">
+                                    Pending Review
+                                </span>
+                            }
+
+                            <span style="font-size: 12px; color: #64748b;">·</span>
+                            <span style="font-size: 12px; color: #64748b;">@FormatTimeAgo(comment.CreatedAt)</span>
+                        </div>
+
+                        <div class="d-flex align-center gap-1">
+                            @if (CanPinComments)
+                            {
+                                <MudIconButton Icon="@(comment.IsPinned ? Icons.Material.Filled.PushPin : Icons.Material.Outlined.PushPin)"
+                                               Color="@(comment.IsPinned ? Color.Warning : Color.Default)"
+                                               Size="Size.Small"
+                                               OnClick="@(() => TogglePinAsync(comment.Id))"
+                                               aria-label="@(comment.IsPinned ? "Unpin comment" : "Pin comment")"
+                                               Style="font-size: 14px;" />
+                            }
+
+                            <MudIconButton Icon="@Icons.Material.Filled.Flag"
+                                           Color="Color.Default"
+                                           Size="Size.Small"
+                                           OnClick="@(() => OpenReportCommentModal(comment.Id, comment.Content))"
+                                           Style="color: #64748b; font-size: 14px;"
+                                           aria-label="Report comment" />
+
+                            @if (comment.CanDelete)
+                            {
+                                <MudIconButton Icon="@Icons.Material.Filled.DeleteOutline"
+                                               Color="Color.Error"
+                                               Size="Size.Small"
+                                               OnClick="@(() => DeleteCommentAsync(comment.Id))"
+                                               Disabled="@(_deletingCommentId == comment.Id)"
+                                               aria-label="Delete comment" />
+                            }
+                        </div>
+                    </div>
+
+                    <!-- Comment Body -->
+                    <div style="font-size: 14px; color: #cbd5e1; line-height: 1.6; word-break: break-word; white-space: pre-wrap;">
+                        @comment.Content
+                    </div>
+
+                    <!-- Comment Actions Toolbar (Upvote & Reply) -->
+                    <div class="mt-2 d-flex align-center gap-3">
+                        <!-- Upvote Button -->
+                        <button class="upvote-btn @(comment.HasUpvoted ? "upvoted" : "")"
+                                @onclick="@(() => ToggleUpvoteAsync(comment))"
+                                title="@(comment.HasUpvoted ? "Remove upvote" : "Upvote comment")">
+                            <svg style="width: 14px; height: 14px; fill: currentColor;" viewBox="0 0 24 24">
+                                <path d="M12 4l-7 8h4v8h6v-8h4z"/>
+                            </svg>
+                            <span>@comment.Upvotes</span>
+                        </button>
+
+                        @if (IsLoggedIn)
+                        {
+                            <button class="reply-trigger-btn" @onclick="@(() => ToggleReplyBox(comment.Id))">
+                                <svg style="width: 13px; height: 13px; fill: currentColor; margin-right: 4px;" viewBox="0 0 24 24">
+                                    <path d="M10 9V5l-7 7 7 7v-4.1c5 0 8.5 1.6 11 5.1-1-5-4-10-11-11z"/>
+                                </svg>
+                                Reply
+                            </button>
+                        }
+                    </div>
+
+                    <!-- Inline Reply Input -->
+                    @if (_activeReplyCommentId == comment.Id)
+                    {
+                        <div class="mt-3 pa-3 rounded-lg" style="background-color: #121519; border: 1px solid rgba(255, 255, 255, 0.08);">
+                            <MudTextField @bind-Value="_replyContent"
+                                          Placeholder="@($"Reply to @{comment.UserName} (Max 1000 chars)...")"
+                                          Variant="Variant.Outlined"
+                                          Lines="2"
+                                          MaxLength="1000"
+                                          Margin="Margin.Dense"
+                                          Disabled="_isPostingReply"
+                                          Class="mb-2" />
+                            @if (CommentsRequireModeration)
+                            {
+                                <div style="font-size: 12px; color: #94a3b8; margin-bottom: 6px;">
+                                    Your reply will be reviewed before it is published.
+                                </div>
+                            }
+                            <div class="d-flex justify-end gap-2">
+                                <MudButton Variant="Variant.Text" Size="Size.Small" OnClick="@(() => _activeReplyCommentId = null)" Style="text-transform: none;">Cancel</MudButton>
+                                <MudButton Variant="Variant.Filled"
+                                           Color="Color.Primary"
+                                           Size="Size.Small"
+                                           OnClick="@(() => PostCommentAsync(comment.Id))"
+                                           Disabled="@(string.IsNullOrWhiteSpace(_replyContent) || _isPostingReply)"
+                                           Style="text-transform: none; font-weight: 600;">
+                                    @if (_isPostingReply)
+                                    {
+                                        <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="ms-n1 me-1" />
+                                        <span>Replying...</span>
+                                    }
+                                    else
+                                    {
+                                        <span>Submit Reply</span>
+                                    }
+                                </MudButton>
+                            </div>
+                        </div>
+                    }
+
+                    <!-- Replies List -->
+                    @if (comment.Replies.Count > 0)
+                    {
+                        <div class="mt-3 ps-3 ps-sm-4 d-flex flex-column gap-3" style="border-left: 2px solid rgba(255, 255, 255, 0.08); margin-left: 8px;">
+                            @foreach (var reply in comment.Replies)
+                            {
+                                <div class="pa-3 rounded-lg" style="background-color: #1a2027; border: 1px solid rgba(255, 255, 255, 0.04);">
+                                    <div class="d-flex align-center justify-space-between mb-1">
+                                        <div class="d-flex align-center flex-wrap gap-2">
+                                            <a href="@($"/user/{reply.UserName}")" style="font-weight: 600; font-size: 13px; color: #f8fafc; text-decoration: none;">
+                                                @reply.UserName
+                                            </a>
+                                            <UserLevelBadge Level="reply.UserLevel" ShowShort="true" />
+                                            @if (!string.IsNullOrEmpty(reply.UserRoleBadge))
+                                            {
+                                                var bLabel = reply.UserRoleBadge == "Admin" ? "Admin" : reply.UserRoleBadge == "SuperModerator" ? "Super Mod" : "Mod";
+                                                <span style="font-size: 10px; font-weight: 600; padding: 1px 4px; border-radius: 4px; background: rgba(56, 189, 248, 0.15); color: #38bdf8;">
+                                                    @bLabel
+                                                </span>
+                                            }
+                                            <span style="font-size: 11px; color: #64748b;">·</span>
+                                            <span style="font-size: 11px; color: #64748b;">@FormatTimeAgo(reply.CreatedAt)</span>
+                                        </div>
+                                        <div class="d-flex align-center gap-1">
+                                            <MudIconButton Icon="@Icons.Material.Filled.Flag"
+                                                           Color="Color.Default"
+                                                           Size="Size.Small"
+                                                           OnClick="@(() => OpenReportCommentModal(reply.Id, reply.Content))"
+                                                           Style="color: #64748b; font-size: 13px;"
+                                                           aria-label="Report reply" />
+                                            @if (reply.CanDelete)
+                                            {
+                                                <MudIconButton Icon="@Icons.Material.Filled.DeleteOutline"
+                                                               Color="Color.Error"
+                                                               Size="Size.Small"
+                                                               OnClick="@(() => DeleteCommentAsync(reply.Id))"
+                                                               Disabled="@(_deletingCommentId == reply.Id)"
+                                                               aria-label="Delete reply" />
+                                            }
+                                        </div>
+                                    </div>
+                                    <div style="font-size: 13px; color: #cbd5e1; line-height: 1.5; word-break: break-word; white-space: pre-wrap;">
+                                        @reply.Content
+                                    </div>
+                                    <div class="mt-1 d-flex align-center gap-2">
+                                        <button class="upvote-btn reply-upvote @(reply.HasUpvoted ? "upvoted" : "")"
+                                                @onclick="@(() => ToggleUpvoteAsync(reply))"
+                                                title="@(reply.HasUpvoted ? "Remove upvote" : "Upvote reply")">
+                                            <svg style="width: 12px; height: 12px; fill: currentColor;" viewBox="0 0 24 24">
+                                                <path d="M12 4l-7 8h4v8h6v-8h4z"/>
+                                            </svg>
+                                            <span>@reply.Upvotes</span>
+                                        </button>
+                                    </div>
+                                </div>
+                            }
+                        </div>
+                    }
+                </div>
+            }
+        </div>
+    }
+</div>
+
+<style>
+    .sort-tabs-wrap {
+        background: #161a1f;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 6px;
+        padding: 2px;
+    }
+
+    .sort-tab {
+        background: transparent;
+        border: none;
+        color: #94a3b8;
+        font-size: 12px;
+        font-weight: 600;
+        padding: 3px 12px;
+        border-radius: 4px;
+        cursor: pointer;
+        transition: all 0.15s ease;
+    }
+
+    .sort-tab.active {
+        background: #262e38;
+        color: #f8fafc;
+    }
+
+    .sort-tab:hover:not(.active) {
+        color: #cbd5e1;
+    }
+
+    .pinned-badge {
+        display: inline-flex;
+        align-items: center;
+        font-size: 11px;
+        font-weight: 600;
+        padding: 1px 6px;
+        border-radius: 4px;
+        background: rgba(245, 158, 11, 0.15);
+        color: #fbbf24;
+        border: 1px solid rgba(245, 158, 11, 0.3);
+    }
+
+    .comment-pinned {
+        border-color: rgba(245, 158, 11, 0.3) !important;
+    }
+
+    .upvote-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        background: transparent;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        color: #94a3b8;
+        border-radius: 4px;
+        font-size: 12px;
+        font-weight: 600;
+        padding: 2px 8px;
+        cursor: pointer;
+        transition: all 0.15s ease;
+    }
+
+    .upvote-btn:hover {
+        background: rgba(255, 255, 255, 0.05);
+        color: #f8fafc;
+        border-color: rgba(255, 255, 255, 0.2);
+    }
+
+    .upvote-btn.upvoted {
+        background: rgba(16, 185, 129, 0.15);
+        color: #10b981;
+        border-color: rgba(16, 185, 129, 0.4);
+    }
+
+    .reply-trigger-btn {
+        display: inline-flex;
+        align-items: center;
+        background: transparent;
+        border: none;
+        color: #94a3b8;
+        font-size: 12px;
+        font-weight: 500;
+        padding: 2px 8px;
+        cursor: pointer;
+        transition: color 0.15s ease;
+    }
+
+    .reply-trigger-btn:hover {
+        color: #f8fafc;
+    }
+
+    .reply-upvote {
+        font-size: 11px;
+        padding: 1px 6px;
+    }
+</style>
+
+@code {
+    [Parameter]
+    public int PollId { get; set; }
+
+    [Parameter]
+    public List<PollCommentDto> Comments { get; set; } = new();
+
+    [Parameter]
+    public bool IsLoggedIn { get; set; }
+
+    [Parameter]
+    public bool CommentsRequireModeration { get; set; }
+
+    [Parameter]
+    public bool CanPinComments { get; set; }
+
+    [Parameter]
+    public EventCallback OnCommentChanged { get; set; }
+
+    private string _sortMode = "hot"; // "hot" or "newest"
+    private string _newCommentContent = "";
+    private string _replyContent = "";
+    private int? _activeReplyCommentId;
+    private bool _isPostingComment = false;
+    private bool _isPostingReply = false;
+    private int? _deletingCommentId;
+
+    private int TotalCommentsCount => Comments.Sum(c => 1 + c.Replies.Count);
+
+    private List<PollCommentDto> SortedComments
+    {
+        get
+        {
+            if (_sortMode == "hot")
+            {
+                return Comments
+                    .OrderByDescending(c => c.IsPinned)
+                    .ThenByDescending(c => c.Upvotes)
+                    .ThenByDescending(c => c.CreatedAt)
+                    .ToList();
+            }
+            return Comments
+                .OrderByDescending(c => c.IsPinned)
+                .ThenByDescending(c => c.CreatedAt)
+                .ToList();
+        }
+    }
+
+    private void SetSortMode(string mode)
+    {
+        _sortMode = mode;
+    }
+
+    private void ToggleReplyBox(int commentId)
+    {
+        if (_activeReplyCommentId == commentId)
+        {
+            _activeReplyCommentId = null;
+        }
+        else
+        {
+            _activeReplyCommentId = commentId;
+            _replyContent = "";
+        }
+    }
+
+    private async Task ToggleUpvoteAsync(PollCommentDto comment)
+    {
+        if (!IsLoggedIn)
+        {
+            NavigationManager.NavigateTo($"/Account/Login?returnUrl=/poll/{PollId}");
+            return;
+        }
+
+        try
+        {
+            var res = await PollApi.UpvoteCommentAsync(comment.Id);
+            if (res.Success)
+            {
+                comment.HasUpvoted = !comment.HasUpvoted;
+                comment.Upvotes += comment.HasUpvoted ? 1 : -1;
+                if (comment.Upvotes < 0) comment.Upvotes = 0;
+                StateHasChanged();
+            }
+            else
+            {
+                Snackbar.Add(res.Message, Severity.Warning);
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Upvote failed: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private async Task TogglePinAsync(int commentId)
+    {
+        try
+        {
+            var res = await PollApi.TogglePinCommentAsync(commentId);
+            if (res.Success)
+            {
+                Snackbar.Add(res.Message, Severity.Success);
+                await OnCommentChanged.InvokeAsync();
+            }
+            else
+            {
+                Snackbar.Add(res.Message, Severity.Error);
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Failed to toggle pin: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private async Task PostCommentAsync(int? parentCommentId = null)
+    {
+        if (!IsLoggedIn)
+        {
+            NavigationManager.NavigateTo($"/Account/Login?returnUrl=/poll/{PollId}");
+            return;
+        }
+
+        var content = parentCommentId.HasValue ? _replyContent : _newCommentContent;
+        if (string.IsNullOrWhiteSpace(content)) return;
+
+        if (parentCommentId.HasValue) _isPostingReply = true;
+        else _isPostingComment = true;
+
+        try
+        {
+            var req = new CreateCommentRequest
+            {
+                PollId = PollId,
+                ParentCommentId = parentCommentId,
+                Content = content.Trim()
+            };
+
+            var res = await PollApi.AddCommentAsync(req);
+            if (res.Success)
+            {
+                Snackbar.Add(res.Message, Severity.Success);
+                if (parentCommentId.HasValue)
+                {
+                    _replyContent = "";
+                    _activeReplyCommentId = null;
+                }
+                else
+                {
+                    _newCommentContent = "";
+                }
+                await OnCommentChanged.InvokeAsync();
+            }
+            else
+            {
+                Snackbar.Add(res.Message, Severity.Error);
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Failed to post comment: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            if (parentCommentId.HasValue) _isPostingReply = false;
+            else _isPostingComment = false;
+        }
+    }
+
+    private async Task DeleteCommentAsync(int commentId)
+    {
+        _deletingCommentId = commentId;
+        try
+        {
+            var res = await PollApi.DeleteCommentAsync(commentId);
+            if (res.Success)
+            {
+                Snackbar.Add(res.Message, Severity.Success);
+                await OnCommentChanged.InvokeAsync();
+            }
+            else
+            {
+                Snackbar.Add(res.Message, Severity.Error);
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Failed to delete: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _deletingCommentId = null;
+        }
+    }
+
+    private async Task OpenReportCommentModal(int commentId, string content)
+    {
+        var snippet = content.Length > 40 ? content[..40] + "..." : content;
+        var parameters = new DialogParameters<ReportDialog>
+        {
+            { x => x.CommentId, commentId },
+            { x => x.ContentTitle, $"Comment: \"{snippet}\"" }
+        };
+        var options = new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true, CloseButton = true };
+        await DialogService.ShowAsync<ReportDialog>("Report Comment", parameters, options);
+    }
+
+    private static string FormatTimeAgo(DateTime dt)
+    {
+        var span = DateTime.UtcNow - dt;
+        if (span.TotalSeconds < 60) return "Just now";
+        if (span.TotalMinutes < 60) return $"{(int)span.TotalMinutes}m ago";
+        if (span.TotalHours < 24) return $"{(int)span.TotalHours}h ago";
+        if (span.TotalDays < 30) return $"{(int)span.TotalDays}d ago";
+        return dt.ToString("yyyy-MM-dd");
+    }
+}

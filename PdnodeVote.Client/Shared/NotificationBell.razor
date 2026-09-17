@@ -1,0 +1,827 @@
+@using Microsoft.AspNetCore.Components.Authorization
+@using Microsoft.AspNetCore.SignalR.Client
+@using PdnodeVote.Client.Models
+@using PdnodeVote.Client.Services
+@inject AuthenticationStateProvider AuthStateProvider
+@inject IPollApiClient PollApi
+@inject NavigationManager Navigation
+@implements IAsyncDisposable
+
+<div class="notification-bell-container">
+    <!-- Bell Trigger Button -->
+    <button type="button"
+            class="notification-bell-btn @(_isOpen ? "active" : "")"
+            @onclick="ToggleOpenAsync"
+            aria-label="Notifications"
+            title="Notifications">
+        <svg class="bell-icon" viewBox="0 0 24 24">
+            <path d="M12 22c1.1 0 2-.9 2-2h-4c0 1.1.9 2 2 2zm6-6v-5c0-3.07-1.63-5.64-4.5-6.32V4c0-.83-.67-1.5-1.5-1.5s-1.5.67-1.5 1.5v.68C7.64 5.36 6 7.92 6 11v5l-2 2v1h16v-1l-2-2zm-2 1H8v-6c0-2.48 1.51-4.5 4-4.5s4 2.02 4 4.5v6z" />
+        </svg>
+        @if (_unreadCount > 0)
+        {
+            <span class="notification-badge">@(_unreadCount > 99 ? "99+" : _unreadCount.ToString())</span>
+        }
+    </button>
+
+    @if (_isOpen)
+    {
+        <!-- Transparent Backdrop to catch clicks outside dropdown -->
+        <div class="notification-backdrop" @onclick="CloseMenu"></div>
+
+        <!-- Dropdown Panel -->
+        <div class="notification-dropdown-panel animate-scale-in" @onclick:stopPropagation="true">
+            <!-- Header -->
+            <div class="notif-header">
+                <div class="d-flex align-center gap-2">
+                    <span class="notif-header-title">Notifications</span>
+                    @if (_unreadCount > 0)
+                    {
+                        <span class="notif-unread-pill">@_unreadCount unread</span>
+                    }
+                </div>
+                @if (_unreadCount > 0)
+                {
+                    <button type="button" class="notif-mark-read-btn" @onclick="MarkAllAsRead">
+                        Mark all as read
+                    </button>
+                }
+            </div>
+
+            <!-- List -->
+            <div class="notif-list-container">
+                @if (_loading)
+                {
+                    <div class="notif-loading">
+                        <div class="notif-spinner"></div>
+                        <span>Loading notifications...</span>
+                    </div>
+                }
+                else if (_notifications.Count == 0)
+                {
+                    <div class="notif-empty">
+                        <svg class="notif-empty-icon" viewBox="0 0 24 24">
+                            <path d="M12 22c1.1 0 2-.9 2-2h-4c0 1.1.9 2 2 2zm6-6v-5c0-3.07-1.63-5.64-4.5-6.32V4c0-.83-.67-1.5-1.5-1.5s-1.5.67-1.5 1.5v.68C7.64 5.36 6 7.92 6 11v5l-2 2v1h16v-1l-2-2zm-2 1H8v-6c0-2.48 1.51-4.5 4-4.5s4 2.02 4 4.5v6z" />
+                        </svg>
+                        <div class="notif-empty-title">No notifications yet</div>
+                        <div class="notif-empty-sub">You will receive alerts for review updates and replies</div>
+                    </div>
+                }
+                else
+                {
+                    @foreach (var item in _notifications)
+                    {
+                        <div class="notif-item @(item.IsRead ? "read" : "unread")"
+                             @onclick="@(() => OpenDetailModal(item))">
+                            <div class="notif-icon-box @GetIconClass(item.Type)">
+                                @((MarkupString)GetIconSvg(item.Type))
+                            </div>
+                            <div class="notif-body">
+                                <div class="notif-row">
+                                    <span class="notif-title">@item.Title</span>
+                                    <span class="notif-time">@FormatTimeAgo(item.CreatedAt)</span>
+                                </div>
+                                <div class="notif-desc">@item.Message</div>
+                            </div>
+                            @if (!item.IsRead)
+                            {
+                                <span class="notif-dot" title="Unread"></span>
+                            }
+                        </div>
+                    }
+                }
+            </div>
+        </div>
+    }
+
+    <!-- True Fullscreen Notification Details Modal Popup -->
+    @if (_selectedNotification != null)
+    {
+        <div class="notif-fullscreen-overlay">
+            <div class="notif-modal-backdrop" @onclick="CloseDetailModal"></div>
+            <div class="notif-modal-container" role="dialog" aria-modal="true">
+                <div class="notif-modal-card animate-modal-in" @onclick:stopPropagation="true">
+                    <!-- Modal Header -->
+                    <div class="notif-modal-header">
+                        <div class="d-flex align-center gap-3">
+                            <div class="notif-icon-box @GetIconClass(_selectedNotification.Type)">
+                                @((MarkupString)GetIconSvg(_selectedNotification.Type))
+                            </div>
+                            <div>
+                                <div class="notif-modal-type-badge">@GetCategoryName(_selectedNotification.Type)</div>
+                                <div class="notif-modal-time">
+                                    @_selectedNotification.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm") · @FormatTimeAgo(_selectedNotification.CreatedAt)
+                                </div>
+                            </div>
+                        </div>
+                        <button type="button" class="notif-modal-close-btn" @onclick="CloseDetailModal" title="Close">
+                            <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
+                                <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" />
+                            </svg>
+                        </button>
+                    </div>
+
+                    <!-- Modal Body -->
+                    <div class="notif-modal-body">
+                        <h3 class="notif-modal-title">@_selectedNotification.Title</h3>
+                        <div class="notif-modal-desc">@_selectedNotification.Message</div>
+                    </div>
+
+                    <!-- Modal Footer -->
+                    <div class="notif-modal-footer">
+                        <button type="button" class="notif-btn notif-btn-secondary" @onclick="CloseDetailModal">
+                            Close
+                        </button>
+                        @if (!string.IsNullOrWhiteSpace(_selectedNotification.TargetUrl))
+                        {
+                            <button type="button" class="notif-btn notif-btn-primary" @onclick="GoToTargetUrl">
+                                <span>View Details</span>
+                                <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+                                    <path d="M5 13h11.86l-5.43 5.43 1.42 1.42L21.14 12l-8.29-8.29-1.42 1.42 5.43 5.43H5v2z" />
+                                </svg>
+                            </button>
+                        }
+                    </div>
+                </div>
+            </div>
+        </div>
+    }
+</div>
+
+<style>
+    .notification-bell-container {
+        position: relative;
+        display: inline-flex;
+        align-items: center;
+        margin-right: 4px;
+    }
+
+    .notification-bell-btn {
+        position: relative;
+        width: 36px;
+        height: 36px;
+        border-radius: 50%;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        background-color: transparent;
+        border: 1px solid transparent;
+        color: #94a3b8;
+        cursor: pointer;
+        padding: 0;
+        transition: all 0.2s ease;
+        outline: none;
+    }
+
+    .notification-bell-btn:hover,
+    .notification-bell-btn.active {
+        background-color: rgba(255, 255, 255, 0.08);
+        color: #f8fafc;
+        border-color: rgba(255, 255, 255, 0.12);
+    }
+
+    .notification-bell-btn .bell-icon {
+        width: 20px;
+        height: 20px;
+        fill: currentColor;
+    }
+
+    .notification-badge {
+        position: absolute;
+        top: 2px;
+        right: 2px;
+        min-width: 17px;
+        height: 17px;
+        padding: 0 4px;
+        border-radius: 9999px;
+        background-color: #ef4444;
+        color: #ffffff;
+        font-size: 10px;
+        font-weight: 700;
+        line-height: 17px;
+        text-align: center;
+        box-shadow: 0 0 0 2px #161a1f;
+    }
+
+    .notification-backdrop {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        z-index: 1040;
+        background: transparent;
+    }
+
+    .notification-dropdown-panel {
+        position: absolute;
+        top: calc(100% + 8px);
+        right: 0;
+        width: 340px;
+        max-width: 90vw;
+        background-color: #191e24;
+        border: 1px solid #384252;
+        border-radius: 12px;
+        box-shadow: 0 16px 36px rgba(0, 0, 0, 0.6);
+        z-index: 1050;
+        overflow: hidden;
+    }
+
+    .animate-scale-in {
+        animation: notifScaleIn 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+        transform-origin: top right;
+    }
+
+    @@keyframes notifScaleIn {
+        from {
+            opacity: 0;
+            transform: scale(0.95) translateY(-4px);
+        }
+        to {
+            opacity: 1;
+            transform: scale(1) translateY(0);
+        }
+    }
+
+    .notif-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 12px 16px;
+        background-color: #15191e;
+        border-bottom: 1px solid #2a323c;
+    }
+
+    .notif-header-title {
+        font-size: 14px;
+        font-weight: 600;
+        color: #f8fafc;
+    }
+
+    .notif-unread-pill {
+        font-size: 11px;
+        padding: 1px 7px;
+        border-radius: 9999px;
+        background-color: rgba(239, 68, 68, 0.2);
+        color: #ef4444;
+        font-weight: 700;
+    }
+
+    .notif-mark-read-btn {
+        background: none;
+        border: none;
+        color: #10b981;
+        font-size: 12px;
+        font-weight: 500;
+        cursor: pointer;
+        padding: 2px 6px;
+        border-radius: 4px;
+        transition: background-color 0.15s ease;
+    }
+
+    .notif-mark-read-btn:hover {
+        background-color: rgba(16, 185, 129, 0.12);
+    }
+
+    .notif-list-container {
+        max-height: 380px;
+        overflow-y: auto;
+    }
+
+    .notif-loading {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 32px 16px;
+        gap: 10px;
+        color: #94a3b8;
+        font-size: 13px;
+    }
+
+    .notif-spinner {
+        width: 22px;
+        height: 22px;
+        border: 2px solid rgba(255, 255, 255, 0.15);
+        border-top-color: #10b981;
+        border-radius: 50%;
+        animation: notifSpin 0.7s linear infinite;
+    }
+
+    @@keyframes notifSpin {
+        to { transform: rotate(360deg); }
+    }
+
+    .notif-empty {
+        text-align: center;
+        padding: 36px 20px;
+        color: #64748b;
+    }
+
+    .notif-empty-icon {
+        width: 36px;
+        height: 36px;
+        fill: currentColor;
+        opacity: 0.4;
+        margin-bottom: 8px;
+    }
+
+    .notif-empty-title {
+        font-size: 14px;
+        font-weight: 500;
+        color: #94a3b8;
+    }
+
+    .notif-empty-sub {
+        font-size: 12px;
+        color: #64748b;
+        margin-top: 4px;
+    }
+
+    .notif-item {
+        display: flex;
+        align-items: flex-start;
+        padding: 12px 16px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+        cursor: pointer;
+        gap: 12px;
+        transition: background-color 0.15s ease;
+        position: relative;
+    }
+
+    .notif-item:hover {
+        background-color: rgba(255, 255, 255, 0.05);
+    }
+
+    .notif-item.unread {
+        background-color: rgba(16, 185, 129, 0.06);
+    }
+
+    .notif-icon-box {
+        width: 32px;
+        height: 32px;
+        border-radius: 8px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+        margin-top: 1px;
+    }
+
+    .notif-icon-box.icon-green { background-color: rgba(16, 185, 129, 0.15); color: #10b981; }
+    .notif-icon-box.icon-red { background-color: rgba(239, 68, 68, 0.15); color: #ef4444; }
+    .notif-icon-box.icon-amber { background-color: rgba(245, 158, 11, 0.15); color: #f59e0b; }
+    .notif-icon-box.icon-blue { background-color: rgba(59, 130, 246, 0.15); color: #3b82f6; }
+
+    .notif-body {
+        flex: 1;
+        min-width: 0;
+    }
+
+    .notif-row {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 8px;
+    }
+
+    .notif-title {
+        font-size: 13px;
+        font-weight: 600;
+        color: #f1f5f9;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .notif-time {
+        font-size: 11px;
+        color: #64748b;
+        flex-shrink: 0;
+    }
+
+    .notif-desc {
+        font-size: 12px;
+        color: #94a3b8;
+        margin-top: 3px;
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+        line-height: 1.4;
+    }
+
+    .notif-dot {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background-color: #10b981;
+        flex-shrink: 0;
+        margin-top: 6px;
+    }
+
+    /* True Viewport Fullscreen Modal Popup Styles */
+    .notif-fullscreen-overlay {
+        position: fixed !important;
+        top: 0 !important;
+        left: 0 !important;
+        right: 0 !important;
+        bottom: 0 !important;
+        width: 100vw !important;
+        height: 100vh !important;
+        z-index: 99999 !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        pointer-events: auto !important;
+    }
+
+    .notif-modal-backdrop {
+        position: absolute !important;
+        top: 0 !important;
+        left: 0 !important;
+        right: 0 !important;
+        bottom: 0 !important;
+        width: 100% !important;
+        height: 100% !important;
+        background-color: rgba(0, 0, 0, 0.78) !important;
+        backdrop-filter: blur(8px) !important;
+        -webkit-backdrop-filter: blur(8px) !important;
+        z-index: 1 !important;
+    }
+
+    .notif-modal-container {
+        position: relative !important;
+        z-index: 2 !important;
+        width: 100% !important;
+        max-width: 520px !important;
+        padding: 16px !important;
+        box-sizing: border-box !important;
+        display: flex !important;
+        justify-content: center !important;
+    }
+
+    .notif-modal-card {
+        width: 100%;
+        background-color: #191e24;
+        border: 1px solid #384252;
+        border-radius: 14px;
+        box-shadow: 0 24px 60px rgba(0, 0, 0, 0.85);
+        overflow: hidden;
+        animation: notifModalIn 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    @@keyframes notifModalIn {
+        from {
+            opacity: 0;
+            transform: scale(0.92) translateY(12px);
+        }
+        to {
+            opacity: 1;
+            transform: scale(1) translateY(0);
+        }
+    }
+
+    .notif-modal-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 16px 20px;
+        background-color: #15191e;
+        border-bottom: 1px solid #2a323c;
+    }
+
+    .notif-modal-type-badge {
+        font-size: 13px;
+        font-weight: 700;
+        color: #f8fafc;
+        letter-spacing: -0.01em;
+    }
+
+    .notif-modal-time {
+        font-size: 12px;
+        color: #64748b;
+        margin-top: 2px;
+    }
+
+    .notif-modal-close-btn {
+        background: transparent;
+        border: none;
+        color: #94a3b8;
+        cursor: pointer;
+        padding: 6px;
+        border-radius: 6px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        transition: all 0.15s ease;
+    }
+
+    .notif-modal-close-btn:hover {
+        background-color: rgba(255, 255, 255, 0.08);
+        color: #f8fafc;
+    }
+
+    .notif-modal-body {
+        padding: 22px 20px;
+    }
+
+    .notif-modal-title {
+        font-size: 17px;
+        font-weight: 700;
+        color: #f8fafc;
+        margin: 0 0 14px 0;
+        line-height: 1.4;
+    }
+
+    .notif-modal-desc {
+        font-size: 14px;
+        color: #cbd5e1;
+        line-height: 1.65;
+        white-space: pre-wrap;
+        word-break: break-word;
+        background-color: rgba(255, 255, 255, 0.02);
+        border: 1px solid rgba(255, 255, 255, 0.06);
+        border-radius: 8px;
+        padding: 14px 16px;
+    }
+
+    .notif-modal-footer {
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        gap: 10px;
+        padding: 14px 20px;
+        background-color: #15191e;
+        border-top: 1px solid #2a323c;
+    }
+
+    .notif-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 8px 18px;
+        border-radius: 8px;
+        font-size: 13px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.15s ease;
+        border: 1px solid transparent;
+    }
+
+    .notif-btn-secondary {
+        background-color: #2a323c;
+        color: #cbd5e1;
+        border-color: #384252;
+    }
+
+    .notif-btn-secondary:hover {
+        background-color: #323b46;
+        color: #f8fafc;
+    }
+
+    .notif-btn-primary {
+        background-color: #10b981;
+        color: #ffffff;
+    }
+
+    .notif-btn-primary:hover {
+        background-color: #059669;
+    }
+</style>
+
+@code {
+    private bool _isOpen;
+    private int _unreadCount;
+    private List<NotificationDto> _notifications = new();
+    private bool _loading;
+    private HubConnection? _hubConnection;
+    private string? _userId;
+    private NotificationDto? _selectedNotification;
+    private bool _initialized;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await CheckAuthAndLoadAsync();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            await CheckAuthAndLoadAsync();
+            StateHasChanged();
+        }
+    }
+
+    private async Task CheckAuthAndLoadAsync()
+    {
+        try
+        {
+            var auth = await AuthStateProvider.GetAuthenticationStateAsync();
+            if (auth.User.Identity?.IsAuthenticated == true)
+            {
+                var userId = auth.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+                if (!string.IsNullOrEmpty(userId))
+                {
+                    _userId = userId;
+                }
+                await RefreshCountAsync();
+
+                if (!_initialized && !string.IsNullOrEmpty(_userId))
+                {
+                    _initialized = true;
+                    await SetupSignalRAsync();
+                }
+            }
+        }
+        catch
+        {
+            // Silently ignore during prerender
+        }
+    }
+
+    private async Task RefreshCountAsync()
+    {
+        try
+        {
+            _unreadCount = await PollApi.GetUnreadNotificationCountAsync();
+        }
+        catch
+        {
+            // Ignore during prerender
+        }
+    }
+
+    private async Task ToggleOpenAsync()
+    {
+        _isOpen = !_isOpen;
+        if (_isOpen)
+        {
+            await LoadNotificationsAsync();
+        }
+    }
+
+    private void CloseMenu()
+    {
+        _isOpen = false;
+    }
+
+    private async Task LoadNotificationsAsync()
+    {
+        try
+        {
+            _loading = true;
+            _unreadCount = await PollApi.GetUnreadNotificationCountAsync();
+            _notifications = await PollApi.GetNotificationsAsync(15);
+        }
+        catch
+        {
+            // Ignore
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task SetupSignalRAsync()
+    {
+        try
+        {
+            var hubUrl = Navigation.ToAbsoluteUri("/hubs/poll");
+            _hubConnection = new HubConnectionBuilder()
+                .WithUrl(hubUrl)
+                .WithAutomaticReconnect()
+                .Build();
+
+            _hubConnection.On<int, NotificationDto>("NotificationReceived", (unreadCount, notification) =>
+            {
+                // Mutate only inside InvokeAsync: the hub callback runs on a SignalR thread while the
+                // renderer may be enumerating _notifications, so mutating first and hopping afterwards
+                // risked a torn read or a lost update under server-interactive rendering.
+                _ = InvokeAsync(() =>
+                {
+                    _unreadCount = unreadCount;
+                    _notifications.Insert(0, notification);
+                    if (_notifications.Count > 20) _notifications.RemoveAt(_notifications.Count - 1);
+                    StateHasChanged();
+                });
+            });
+
+            // SignalR does not restore group membership after a reconnect, so re-join.
+            _hubConnection.Reconnected += async _ =>
+            {
+                try
+                {
+                    await _hubConnection.SendAsync("JoinUserGroup");
+                }
+                catch
+                {
+                    // Ignore: the bell still refreshes on demand.
+                }
+            };
+
+            await _hubConnection.StartAsync();
+
+            // The server derives the group from the authenticated identity, so no id is sent.
+            await _hubConnection.SendAsync("JoinUserGroup");
+        }
+        catch
+        {
+            // Silently ignore if SignalR hub cannot be connected
+        }
+    }
+
+    private async Task MarkAllAsRead()
+    {
+        var res = await PollApi.MarkNotificationsAsReadAsync(null);
+        if (res.Success)
+        {
+            _unreadCount = 0;
+            foreach (var n in _notifications) n.IsRead = true;
+            StateHasChanged();
+        }
+    }
+
+    private void OpenDetailModal(NotificationDto item)
+    {
+        _selectedNotification = item;
+        _isOpen = false; // close the dropdown menu
+
+        if (!item.IsRead)
+        {
+            item.IsRead = true;
+            _unreadCount = Math.Max(0, _unreadCount - 1);
+            _ = PollApi.MarkNotificationsAsReadAsync(item.Id);
+        }
+    }
+
+    private void CloseDetailModal()
+    {
+        _selectedNotification = null;
+    }
+
+    private void GoToTargetUrl()
+    {
+        if (_selectedNotification != null && !string.IsNullOrWhiteSpace(_selectedNotification.TargetUrl))
+        {
+            var url = _selectedNotification.TargetUrl;
+            _selectedNotification = null;
+            Navigation.NavigateTo(url);
+        }
+    }
+
+    private static string GetCategoryName(int type) => type switch
+    {
+        1 => "Poll Approved",
+        2 => "Poll Rejected",
+        3 => "Revision Requested",
+        4 => "New Reply Received",
+        5 => "Comment Moderated",
+        6 => "Board Approved",
+        7 => "Board Request Rejected",
+        _ => "System Notice"
+    };
+
+    private static string GetIconSvg(int type) => type switch
+    {
+        1 => "<svg viewBox=\"0 0 24 24\" width=\"16\" height=\"16\" fill=\"currentColor\"><path d=\"M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z\"/></svg>",
+        2 => "<svg viewBox=\"0 0 24 24\" width=\"16\" height=\"16\" fill=\"currentColor\"><path d=\"M12 2C6.47 2 2 6.47 2 12s4.47 10 10 10 10-4.47 10-10S17.53 2 12 2zm5 13.59L15.59 17 12 13.41 8.41 17 7 15.59 10.59 12 7 8.41 8.41 7 12 10.59 15.59 7 17 8.41 13.41 12 17 15.59z\"/></svg>",
+        3 => "<svg viewBox=\"0 0 24 24\" width=\"16\" height=\"16\" fill=\"currentColor\"><path d=\"M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z\"/></svg>",
+        4 => "<svg viewBox=\"0 0 24 24\" width=\"16\" height=\"16\" fill=\"currentColor\"><path d=\"M10 9V5l-7 7 7 7v-4.1c5 0 8.5 1.6 11 5.1-1-5-4-10-11-11z\"/></svg>",
+        5 => "<svg viewBox=\"0 0 24 24\" width=\"16\" height=\"16\" fill=\"currentColor\"><path d=\"M1 21h12v2H1zM5.245 8.07l2.83-2.827 8.992 8.992-2.828 2.828zM12.317 1l2.828 2.828-5.656 5.656-2.828-2.828zM21.503 10.192l-2.828-2.828-2.828 2.828 2.828 2.828z\"/></svg>",
+        6 => "<svg viewBox=\"0 0 24 24\" width=\"16\" height=\"16\" fill=\"currentColor\"><path d=\"M18 7l-1.41-1.41-6.34 6.34 1.41 1.41L18 7zm4.24-1.41L11.66 16.17 7.41 11.93l-1.41 1.41 5.66 5.66 12-12-1.42-1.41zM.41 13.34l5.66 5.66 1.41-1.41-5.66-5.66-1.41 1.41z\"/></svg>",
+        7 => "<svg viewBox=\"0 0 24 24\" width=\"16\" height=\"16\" fill=\"currentColor\"><path d=\"M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.42 0-8-3.58-8-8 0-1.85.63-3.55 1.69-4.9L16.9 18.31C15.55 19.37 13.85 20 12 20zm6.31-3.1L7.1 5.69C8.45 4.63 10.15 4 12 4c4.42 0 8 3.58 8 8 0 1.85-.63 3.55-1.69 4.9z\"/></svg>",
+        _ => "<svg viewBox=\"0 0 24 24\" width=\"16\" height=\"16\" fill=\"currentColor\"><path d=\"M12 22c1.1 0 2-.9 2-2h-4c0 1.1.9 2 2 2zm6-6v-5c0-3.07-1.63-5.64-4.5-6.32V4c0-.83-.67-1.5-1.5-1.5s-1.5.67-1.5 1.5v.68C7.64 5.36 6 7.92 6 11v5l-2 2v1h16v-1l-2-2zm-2 1H8v-6c0-2.48 1.51-4.5 4-4.5s4 2.02 4 4.5v6z\"/></svg>"
+    };
+
+    private static string GetIconClass(int type) => type switch
+    {
+        1 or 6 => "icon-green",
+        2 or 7 => "icon-red",
+        3 or 5 => "icon-amber",
+        _ => "icon-blue"
+    };
+
+    private static string FormatTimeAgo(DateTime dt)
+    {
+        var span = DateTime.UtcNow - dt;
+        if (span.TotalMinutes < 1) return "just now";
+        if (span.TotalMinutes < 60) return $"{(int)span.TotalMinutes}m ago";
+        if (span.TotalHours < 24) return $"{(int)span.TotalHours}h ago";
+        if (span.TotalDays < 30) return $"{(int)span.TotalDays}d ago";
+        return dt.ToLocalTime().ToString("MMM dd");
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_hubConnection != null)
+        {
+            try
+            {
+                await _hubConnection.DisposeAsync();
+            }
+            catch { }
+        }
+    }
+}

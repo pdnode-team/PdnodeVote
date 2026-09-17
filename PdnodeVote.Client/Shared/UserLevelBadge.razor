@@ -1,0 +1,77 @@
+@using PdnodeVote.Client.Models
+
+@if (Level >= 1 && Level <= 6)
+{
+    <span class="user-level-badge level-@Level" title="Community Level @Level">
+        @if (ShowShort)
+        {
+            @UserLevelHelper.GetLevelShort(Level)
+        }
+        else
+        {
+            @UserLevelHelper.GetLevelName(Level)
+        }
+    </span>
+}
+
+<style>
+    .user-level-badge {
+        display: inline-flex;
+        align-items: center;
+        padding: 1px 7px;
+        font-size: 11px;
+        font-weight: 700;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        letter-spacing: -0.02em;
+        border-radius: 4px;
+        line-height: 1.4;
+        user-select: none;
+        vertical-align: middle;
+        transition: opacity 0.15s ease;
+    }
+
+    .user-level-badge.level-1 {
+        background-color: rgba(100, 116, 139, 0.16);
+        color: #94a3b8;
+        border: 1px solid rgba(100, 116, 139, 0.28);
+    }
+
+    .user-level-badge.level-2 {
+        background-color: rgba(59, 130, 246, 0.15);
+        color: #60a5fa;
+        border: 1px solid rgba(59, 130, 246, 0.3);
+    }
+
+    .user-level-badge.level-3 {
+        background-color: rgba(6, 182, 212, 0.15);
+        color: #22d3ee;
+        border: 1px solid rgba(6, 182, 212, 0.3);
+    }
+
+    .user-level-badge.level-4 {
+        background-color: rgba(16, 185, 129, 0.15);
+        color: #34d399;
+        border: 1px solid rgba(16, 185, 129, 0.3);
+    }
+
+    .user-level-badge.level-5 {
+        background-color: rgba(245, 158, 11, 0.15);
+        color: #fbbf24;
+        border: 1px solid rgba(245, 158, 11, 0.35);
+    }
+
+    .user-level-badge.level-6 {
+        background-color: rgba(139, 92, 246, 0.18);
+        color: #c084fc;
+        border: 1px solid rgba(139, 92, 246, 0.45);
+        box-shadow: 0 0 8px rgba(139, 92, 246, 0.25);
+    }
+</style>
+
+@code {
+    [Parameter]
+    public int Level { get; set; } = 1;
+
+    [Parameter]
+    public bool ShowShort { get; set; } = true;
+}

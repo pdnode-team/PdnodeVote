@@ -1,0 +1,157 @@
+@using Microsoft.JSInterop
+@inject IJSRuntime JSRuntime
+@inject ISnackbar Snackbar
+@inject NavigationManager Navigation
+
+<MudDialog Style="background-color: #1e242c; color: #f8fafc; border: 1px solid rgba(255,255,255,0.1); border-radius: 12px; max-width: 480px; width: 100%;">
+    <TitleContent>
+        <div class="d-flex align-center justify-space-between">
+            <div class="d-flex align-center gap-2">
+                <MudIcon Icon="@Icons.Material.Filled.Share" Style="color: #10b981;" />
+                <MudText Typo="Typo.h6" Style="font-size: 17px; font-weight: 700; color: #f8fafc;">Share Poll</MudText>
+            </div>
+            <MudIconButton Icon="@Icons.Material.Filled.Close" Size="Size.Small" OnClick="Cancel" Style="color: #64748b;" />
+        </div>
+    </TitleContent>
+    <DialogContent>
+        <MudTabs Elevation="0" Rounded="true" ApplyEffectsToContainer="true" Color="Color.Transparent" Class="pt-3">
+            <!-- Tab 1: Direct Link -->
+            <MudTabPanel Text="Link">
+                <div class="mb-3">
+                    <MudText Typo="Typo.caption" Style="color: #94a3b8; font-weight: 500;">Poll URL</MudText>
+                    <div class="d-flex align-center gap-2 mt-1">
+                        <MudTextField @bind-Value="_pollUrl"
+                                      ReadOnly="true"
+                                      Variant="Variant.Outlined"
+                                      Margin="Margin.Dense"
+                                      Style="font-size: 13px; font-family: monospace; color: #e2e8f0; background: rgba(0,0,0,0.2);" />
+                        <MudButton Variant="Variant.Filled"
+                                   Color="Color.Primary"
+                                   Size="Size.Medium"
+                                   OnClick="CopyLink"
+                                   StartIcon="@Icons.Material.Filled.ContentCopy"
+                                   Style="text-transform: none; font-weight: 600; white-space: nowrap;">
+                            Copy
+                        </MudButton>
+                    </div>
+                </div>
+
+                <MudButton Variant="Variant.Outlined"
+                           FullWidth="true"
+                           StartIcon="@Icons.Material.Filled.Share"
+                           OnClick="ShareNative"
+                           Style="color: #94a3b8; border-color: rgba(255,255,255,0.1); text-transform: none; font-size: 13px;">
+                    Share via system apps...
+                </MudButton>
+            </MudTabPanel>
+
+            <!-- Tab 2: Dynamic QR Code -->
+            <MudTabPanel Text="QR Code">
+                <div class="text-center py-2">
+                    <div style="background-color: #ffffff; padding: 12px; border-radius: 12px; display: inline-block; box-shadow: 0 4px 12px rgba(0,0,0,0.3);">
+                        <img src="@($"/api/polls/{PollId}/qrcode")"
+                             alt="Poll QR Code"
+                             style="width: 180px; height: 180px; display: block;" />
+                    </div>
+                    <MudText Typo="Typo.body2" Style="color: #94a3b8; margin-top: 10px; font-size: 13px;">
+                        Scan with your phone's camera to vote instantly.
+                    </MudText>
+                    <div class="mt-3">
+                        <MudButton Variant="Variant.Text"
+                                   Size="Size.Small"
+                                   Href="@($"/api/polls/{PollId}/qrcode")"
+                                   Target="_blank"
+                                   StartIcon="@Icons.Material.Filled.Download"
+                                   Style="color: #10b981; text-transform: none; font-size: 12px;">
+                            Open SVG image
+                        </MudButton>
+                    </div>
+                </div>
+            </MudTabPanel>
+
+            <!-- Tab 3: Embed Iframe -->
+            <MudTabPanel Text="Embed">
+                <div class="mb-2">
+                    <MudText Typo="Typo.caption" Style="color: #94a3b8; font-weight: 500;">
+                        Paste this code snippet into your blog, documentation, or website:
+                    </MudText>
+                    <MudTextField Value="@_embedCode"
+                                  ReadOnly="true"
+                                  Lines="3"
+                                  Variant="Variant.Outlined"
+                                  Margin="Margin.Dense"
+                                  Class="mt-2"
+                                  Style="font-size: 12px; font-family: monospace; color: #38bdf8; background: rgba(0,0,0,0.3);" />
+                    <div class="d-flex justify-end mt-2">
+                        <MudButton Variant="Variant.Filled"
+                                   Color="Color.Primary"
+                                   Size="Size.Small"
+                                   OnClick="CopyEmbedCode"
+                                   StartIcon="@Icons.Material.Filled.Code"
+                                   Style="text-transform: none; font-weight: 600;">
+                            Copy Embed Code
+                        </MudButton>
+                    </div>
+                </div>
+            </MudTabPanel>
+        </MudTabs>
+    </DialogContent>
+</MudDialog>
+
+@code {
+    [CascadingParameter]
+    private IMudDialogInstance MudDialog { get; set; } = default!;
+
+    [Parameter]
+    public int PollId { get; set; }
+
+    [Parameter]
+    public string PollTitle { get; set; } = string.Empty;
+
+    private string _pollUrl = string.Empty;
+    private string _embedCode = string.Empty;
+
+    protected override void OnInitialized()
+    {
+        var baseUri = Navigation.BaseUri.TrimEnd('/');
+        _pollUrl = $"{baseUri}/poll/{PollId}";
+        _embedCode = $"<iframe src=\"{baseUri}/embed/poll/{PollId}\" width=\"100%\" height=\"420\" frameborder=\"0\" style=\"border-radius:12px; overflow:hidden;\"></iframe>";
+    }
+
+    private async Task CopyLink()
+    {
+        await JSRuntime.InvokeVoidAsync("navigator.clipboard.writeText", _pollUrl);
+        Snackbar.Add("Link copied to clipboard!", Severity.Success);
+    }
+
+    private async Task CopyEmbedCode()
+    {
+        await JSRuntime.InvokeVoidAsync("navigator.clipboard.writeText", _embedCode);
+        Snackbar.Add("Embed code copied to clipboard!", Severity.Success);
+    }
+
+    private async Task ShareNative()
+    {
+        try
+        {
+            await JSRuntime.InvokeVoidAsync("eval", $@"
+                if (navigator.share) {{
+                    navigator.share({{
+                        title: {System.Text.Json.JsonSerializer.Serialize(PollTitle)},
+                        text: 'Vote on this poll: ' + {System.Text.Json.JsonSerializer.Serialize(PollTitle)},
+                        url: {System.Text.Json.JsonSerializer.Serialize(_pollUrl)}
+                    }}).catch(function(e) {{}});
+                }} else {{
+                    navigator.clipboard.writeText({System.Text.Json.JsonSerializer.Serialize(_pollUrl)});
+                }}
+            ");
+            Snackbar.Add("Share dialog opened (or copied to clipboard).", Severity.Info);
+        }
+        catch
+        {
+            await CopyLink();
+        }
+    }
+
+    private void Cancel() => MudDialog.Cancel();
+}

@@ -1,0 +1,599 @@
+@page "/"
+@rendermode InteractiveAuto
+@implements IAsyncDisposable
+@using Microsoft.AspNetCore.SignalR.Client
+@inject IPollApiClient PollApi
+@inject NavigationManager NavigationManager
+@inject ISnackbar Snackbar
+@inject ApiErrorState ApiErrors
+
+<PageTitle>Pdnode Vote - Polls</PageTitle>
+
+<InteractiveMudProviders />
+
+
+<!-- Modern Feed Header -->
+<div class="d-flex flex-column flex-sm-row justify-space-between align-sm-center mb-6 gap-3">
+    <div>
+        <h1 style="font-size: 26px; font-weight: 700; color: #f8fafc; margin: 0 0 4px 0; letter-spacing: -0.025em;">
+            Explore Polls
+        </h1>
+        <div style="font-size: 14px; color: #94a3b8;">
+            Cast your vote, join community discussions, and explore board-categorized polls
+        </div>
+    </div>
+    <div class="d-flex align-center gap-2">
+        <MudButton Variant="Variant.Outlined"
+                   Color="Color.Default"
+                   StartIcon="@Icons.Material.Filled.AddCircleOutline"
+                   OnClick="@(() => _showApplyModal = true)"
+                   Style="border-color: rgba(255,255,255,0.15); color: #cbd5e1; font-weight: 600; padding: 8px 16px; border-radius: 8px; text-transform: none; font-size: 13px;">
+            Request Board
+        </MudButton>
+
+        <MudButton Variant="Variant.Filled"
+                   Color="Color.Primary"
+                   StartIcon="@Icons.Material.Filled.Add"
+                   Href="/create-poll"
+                   Style="font-weight: 600; padding: 8px 18px; border-radius: 8px; text-transform: none; font-size: 14px;">
+            New Poll
+        </MudButton>
+    </div>
+</div>
+
+<!-- Category Navigation Bar -->
+@if (_categories.Count > 0)
+{
+    <div class="mb-4 pa-3 rounded-xl" style="background-color: #1e242d; border: 1px solid rgba(255, 255, 255, 0.08);">
+        <div class="d-flex align-center justify-space-between mb-2">
+            <span style="font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: #10b981;">
+                Community Boards
+            </span>
+            @if (_selectedCategoryId.HasValue)
+            {
+                <MudButton Variant="Variant.Text" Size="Size.Small" Color="Color.Default" OnClick="@(() => OnCategorySelected(null))" Style="text-transform: none; font-size: 12px; color: #94a3b8;">
+                    Clear filter
+                </MudButton>
+            }
+        </div>
+
+        <button type="button"
+                class="board-nav-item board-nav-all @(_selectedCategoryId == null ? "selected" : "")"
+                @onclick="@(() => OnCategorySelected(null))">
+            <span class="board-nav-name" style="font-weight: 700;">All Boards</span>
+        </button>
+
+        <div class="board-nav-groups">
+            @foreach (var group in GetBoardGroups())
+            {
+                <div class="board-nav-group">
+                    @foreach (var cat in group)
+                    {
+                        var isSelected = _selectedCategoryId == cat.Id;
+                        var prefix = cat.Depth > 0 ? new string('\u00A0', cat.Depth * 3) + "↳ " : "";
+                        <button type="button"
+                                class="board-nav-item @(cat.Depth == 0 ? "is-parent" : "is-child") @(isSelected ? "selected" : "")"
+                                @onclick="@(() => OnCategorySelected(cat.Id))">
+                            <span class="board-nav-label">
+                                @if (cat.Depth > 0)
+                                {
+                                    <span class="board-nav-branch">@prefix</span>
+                                }
+                                <span class="board-nav-name">@cat.Name</span>
+                            </span>
+                            @if (cat.PollCount > 0)
+                            {
+                                <span class="board-nav-count">@cat.PollCount</span>
+                            }
+                        </button>
+                    }
+                </div>
+            }
+        </div>
+
+        @if (SelectedBoard != null && !string.IsNullOrEmpty(SelectedBoard.Description))
+        {
+            <div style="font-size: 12px; color: #94a3b8; margin-top: 10px; padding-left: 4px;">
+                <MudIcon Icon="@Icons.Material.Filled.Info" Size="Size.Small" Style="font-size: 14px; vertical-align: text-bottom; margin-right: 4px;" />
+                @SelectedBoard.Description
+            </div>
+        }
+    </div>
+}
+
+<!-- Popular Tags Bar -->
+@if (_popularTags.Count > 0 || !string.IsNullOrEmpty(_selectedTag))
+{
+    <div class="mb-4 d-flex align-center flex-wrap gap-2">
+        <span style="font-size: 12px; font-weight: 600; color: #64748b; margin-right: 2px;">TAGS:</span>
+        @if (!string.IsNullOrEmpty(_selectedTag))
+        {
+            <MudChip T="string"
+                     Color="Color.Info"
+                     Variant="Variant.Filled"
+                     Size="Size.Small"
+                     OnClose="@(() => OnTagSelected(null))"
+                     CloseIcon="@Icons.Material.Filled.Close">
+                #@_selectedTag
+            </MudChip>
+        }
+        @foreach (var tag in _popularTags.Take(10))
+        {
+            if (!string.Equals(tag.Name, _selectedTag, StringComparison.OrdinalIgnoreCase))
+            {
+                <span @onclick="@(() => OnTagSelected(tag.Name))"
+                      style="font-size: 12px; color: #94a3b8; background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.06); padding: 3px 10px; border-radius: 9999px; cursor: pointer; transition: all 0.2s;"
+                      onmouseover="this.style.color='#38bdf8'; this.style.borderColor='rgba(56,189,248,0.3)';"
+                      onmouseout="this.style.color='#94a3b8'; this.style.borderColor='rgba(255,255,255,0.06)';">
+                    #@tag.Name
+                </span>
+            }
+        }
+    </div>
+}
+
+<!-- Refined Filter & Search Toolbar -->
+<div class="feed-filter-bar mb-6">
+    <MudGrid Class="align-center" Spacing="2">
+        <MudItem xs="12" md="6">
+            <MudTextField @bind-Value="_searchText"
+                          Placeholder="Search polls by title or keyword..."
+                          Adornment="Adornment.Start"
+                          AdornmentIcon="@Icons.Material.Filled.Search"
+                          Immediate="false"
+                          OnKeyUp="@HandleSearchKeyUp"
+                          Clearable="true"
+                          OnClearButtonClick="@LoadPollsAsync"
+                          Margin="Margin.Dense"
+                          Variant="Variant.Outlined"
+                          Class="my-0" />
+        </MudItem>
+
+        <MudItem xs="7" md="3">
+            <MudButtonGroup Color="Color.Primary" Variant="Variant.Outlined" Size="Size.Small" OverrideStyles="false">
+                <MudButton Variant="@(_selectedStatus == "all" ? Variant.Filled : Variant.Outlined)"
+                           OnClick="@(() => OnStatusChanged("all"))" Style="text-transform: none; font-size: 13px;">All</MudButton>
+                <MudButton Variant="@(_selectedStatus == "active" ? Variant.Filled : Variant.Outlined)"
+                           OnClick="@(() => OnStatusChanged("active"))" Style="text-transform: none; font-size: 13px;">Active</MudButton>
+                <MudButton Variant="@(_selectedStatus == "expired" ? Variant.Filled : Variant.Outlined)"
+                           OnClick="@(() => OnStatusChanged("expired"))" Style="text-transform: none; font-size: 13px;">Closed</MudButton>
+            </MudButtonGroup>
+        </MudItem>
+
+        <MudItem xs="5" md="3" Class="d-flex justify-end">
+            <MudSelect T="string" Value="_selectedSort" ValueChanged="OnSortChanged" Margin="Margin.Dense" Variant="Variant.Outlined" Dense="true" Style="font-size: 13px;">
+                <MudSelectItem Value="@("latest")">Latest First</MudSelectItem>
+                <MudSelectItem Value="@("popular")">Most Votes</MudSelectItem>
+            </MudSelect>
+        </MudItem>
+    </MudGrid>
+</div>
+
+<!-- Poll Feed Grid -->
+@if (_isLoading)
+{
+    <div class="d-flex justify-center my-12">
+        <MudProgressCircular Color="Color.Primary" Indeterminate="true" Size="Size.Medium" />
+    </div>
+}
+else if (_polls == null || _polls.Count == 0)
+{
+    <div class="text-center py-12 px-4 rounded-xl" style="background-color: #1a2027; border: 1px dashed #384252;">
+        <MudIcon Icon="@Icons.Material.Outlined.HowToVote" Style="font-size: 3rem; color: #64748b;" />
+        <h3 style="font-size: 18px; font-weight: 600; color: #f8fafc; margin-top: 12px; margin-bottom: 6px;">No polls found</h3>
+        <p style="font-size: 14px; color: #94a3b8; margin-bottom: 20px;">Try adjusting your filters or create a new poll in this category.</p>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" Href="/create-poll" StartIcon="@Icons.Material.Filled.Add" Style="text-transform: none;">
+            Create a Poll
+        </MudButton>
+    </div>
+}
+else
+{
+    <MudGrid Spacing="3">
+        @foreach (var poll in _polls)
+        {
+            <MudItem xs="12" sm="6" lg="4">
+                <div class="poll-feed-card" @onclick="@(() => NavigationManager.NavigateTo($"/poll/{poll.Id}"))">
+                    <!-- Subtle Meta Header -->
+                    <div class="poll-card-meta d-flex flex-wrap align-center gap-1">
+                        @if (poll.IsPinned)
+                        {
+                            <span class="status-pill pinned">
+                                <svg style="width: 12px; height: 12px; fill: currentColor;" viewBox="0 0 24 24">
+                                    <path d="M16 12V4h1V2H7v2h1v8l-2 2v2h5.2v6h1.6v-6H18v-2l-2-2z" />
+                                </svg>
+                                Pinned
+                            </span>
+                        }
+
+                        @if (poll.IsExpired)
+                        {
+                            <span class="status-pill expired">Closed</span>
+                        }
+                        else
+                        {
+                            <span class="status-pill active">Open</span>
+                        }
+
+                        @if (!string.IsNullOrEmpty(poll.CategoryName))
+                        {
+                            <span class="status-pill" style="background: rgba(56, 189, 248, 0.12); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.25);">
+                                @poll.CategoryName
+                            </span>
+                        }
+
+                        @if (poll.HasImages)
+                        {
+                            <span class="status-pill" style="background: rgba(139, 92, 246, 0.15); color: #c084fc; border: 1px solid rgba(139, 92, 246, 0.3);" title="Includes Visual Options">
+                                <svg style="width: 11px; height: 11px; fill: currentColor; margin-right: 3px;" viewBox="0 0 24 24">
+                                    <path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/>
+                                </svg>
+                                Visual
+                            </span>
+                        }
+
+                        <span class="meta-dot"></span>
+                        <span>@(poll.IsMultipleChoice ? "Multi-choice" : "Single-choice")</span>
+
+                        @if (poll.RequireLogin)
+                        {
+                            <span class="meta-dot"></span>
+                            <span title="Members only">
+                                <svg style="width: 12px; height: 12px; fill: currentColor; vertical-align: -1px;" viewBox="0 0 24 24">
+                                    <path d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2z"/>
+                                </svg>
+                            </span>
+                        }
+
+                        <span class="meta-dot"></span>
+                        <a href="@($"/user/{poll.CreatorName}")"
+                           @onclick:stopPropagation="true"
+                           style="color: #94a3b8; font-weight: 500; text-decoration: none; display: inline-flex; align-items: center; gap: 4px;"
+                           onmouseover="this.style.color='#38bdf8'"
+                           onmouseout="this.style.color='#94a3b8'">
+                            <span>@@@poll.CreatorName</span>
+                        </a>
+                    </div>
+
+                    <!-- Title -->
+                    <div class="poll-card-title">
+                        @poll.Title
+                    </div>
+
+                    <!-- Optional Description snippet -->
+                    @if (!string.IsNullOrWhiteSpace(poll.Description))
+                    {
+                        <div class="poll-card-desc">
+                            @poll.Description
+                        </div>
+                    }
+
+                    <!-- Tags list if any -->
+                    @if (poll.Tags.Count > 0)
+                    {
+                        <div class="d-flex flex-wrap gap-1 my-2" @onclick:stopPropagation="true">
+                            @foreach (var tag in poll.Tags)
+                            {
+                                <span @onclick="@(() => OnTagSelected(tag))"
+                                      style="font-size: 11px; color: #94a3b8; background: rgba(255,255,255,0.04); padding: 2px 6px; border-radius: 4px; cursor: pointer; transition: all 0.15s ease;"
+                                      onmouseover="this.style.color='#38bdf8'"
+                                      onmouseout="this.style.color='#94a3b8'">
+                                    #@tag
+                                </span>
+                            }
+                        </div>
+                    }
+
+                    <!-- Footer with metrics -->
+                    <div class="poll-card-footer">
+                        <div class="poll-metrics">
+                            <span title="Participants">
+                                <svg style="width: 14px; height: 14px; fill: currentColor; opacity: 0.7;" viewBox="0 0 24 24">
+                                    <path d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"/>
+                                </svg>
+                                @poll.ParticipantCount
+                            </span>
+                            <span title="Options">
+                                <svg style="width: 14px; height: 14px; fill: currentColor; opacity: 0.7;" viewBox="0 0 24 24">
+                                    <path d="M4 10.5c-.83 0-1.5.67-1.5 1.5s.67 1.5 1.5 1.5 1.5-.67 1.5-1.5-.67-1.5-1.5-1.5zm0-6c-.83 0-1.5.67-1.5 1.5S3.17 7.5 4 7.5 5.5 6.83 5.5 6 4.83 4.5 4 4.5zm0 12c-.83 0-1.5.68-1.5 1.5s.68 1.5 1.5 1.5 1.5-.68 1.5-1.5-.67-1.5-1.5-1.5zM7 19h14v-2H7v2zm0-6h14v-2H7v2zm0-8v2h14V5H7z"/>
+                                </svg>
+                                @poll.OptionCount
+                            </span>
+                            <span title="Comments">
+                                <svg style="width: 14px; height: 14px; fill: currentColor; opacity: 0.7;" viewBox="0 0 24 24">
+                                    <path d="M20 2H4c-1.1 0-1.99.9-1.99 2L2 22l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zM6 9h12v2H6V9zm8 5H6v-2h8v2zm4-6H6V6h12v2z"/>
+                                </svg>
+                                @poll.CommentCount
+                            </span>
+                        </div>
+                        <div class="poll-card-arrow">
+                            <span>@(poll.IsExpired ? "Results" : "Vote")</span>
+                            <svg style="width: 12px; height: 12px; fill: currentColor;" viewBox="0 0 24 24">
+                                <path d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6-1.41-1.41z"/>
+                            </svg>
+                        </div>
+                    </div>
+                </div>
+            </MudItem>
+        }
+    </MudGrid>
+}
+
+<!-- Dialog: Apply for New Board -->
+<MudDialog @bind-Visible="_showApplyModal" Options="@(new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true })">
+    <TitleContent>
+        <div class="d-flex align-center gap-2">
+            <MudIcon Icon="@Icons.Material.Filled.DashboardCustomize" Color="Color.Primary" />
+            <span style="font-weight: 700; font-size: 16px;">Request New Board</span>
+        </div>
+    </TitleContent>
+    <DialogContent>
+        <div class="d-flex flex-column gap-3 py-2">
+            <div style="font-size: 13px; color: #94a3b8;">
+                Community members can request top-level boards or sub-boards. Requests are automatically activated once approved by <strong>at least 2 moderators</strong> or <strong>any administrator</strong>.
+            </div>
+
+            <MudTextField @bind-Value="_applyRequest.Name"
+                          Label="Board Name"
+                          Placeholder="e.g. Tech Innovations, Gaming Lounge, Career Advice"
+                          Variant="Variant.Outlined"
+                          Required="true"
+                          MaxLength="50"
+                          Counter="50"
+                          Margin="Margin.Dense" />
+
+            <MudSelect T="int?" @bind-Value="_applyRequest.ParentId"
+                       Label="Parent Board (Optional, leave empty for top-level)"
+                       Variant="Variant.Outlined"
+                       Clearable="true"
+                       AnchorOrigin="Origin.BottomCenter"
+                       Margin="Margin.Dense">
+                @foreach (var cat in _flattenedCategories.Where(c => c.Depth < 3))
+                {
+                    var prefix = cat.Depth > 0 ? new string('\u00A0', cat.Depth * 3) + "↳ " : "";
+                    <MudSelectItem Value="@((int?)cat.Id)">
+                        <span style="opacity: 0.6;">@prefix</span>
+                        @cat.Name
+                    </MudSelectItem>
+                }
+            </MudSelect>
+
+            <MudTextField @bind-Value="_applyRequest.Description"
+                          Label="Description & Purpose"
+                          Placeholder="Briefly describe the scope of topics and rationale for this board..."
+                          Variant="Variant.Outlined"
+                          Lines="3"
+                          MaxLength="200"
+                          Counter="200"
+                          Margin="Margin.Dense" />
+        </div>
+    </DialogContent>
+    <DialogActions>
+        <MudButton Variant="Variant.Text" OnClick="@(() => _showApplyModal = false)" Style="text-transform: none;">Cancel</MudButton>
+        <MudButton Variant="Variant.Filled"
+                   Color="Color.Primary"
+                   OnClick="SubmitCategoryApplicationAsync"
+                   Disabled="_isSubmittingApplication"
+                   Style="text-transform: none; font-weight: 600;">
+            @if (_isSubmittingApplication)
+            {
+                <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="ms-n1 me-2" />
+                <span>Submitting...</span>
+            }
+            else
+            {
+                <span>Submit Request</span>
+            }
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [SupplyParameterFromQuery(Name = "tag")]
+    public string? UrlTag { get; set; }
+
+    private List<PollListItemDto>? _polls;
+    private bool _isLoading = true;
+    private string _searchText = "";
+    private string _selectedStatus = "all";
+    private string _selectedSort = "latest";
+    private int? _selectedCategoryId;
+    private string? _selectedTag;
+
+    private List<CategoryDto> _categories = new();
+    private List<CategoryDto> _flattenedCategories = new();
+    private List<TagDto> _popularTags = new();
+    private CategoryDto? SelectedBoard => _flattenedCategories.FirstOrDefault(c => c.Id == _selectedCategoryId);
+
+    private bool _showApplyModal = false;
+    private bool _isSubmittingApplication = false;
+    private SubmitCategoryRequest _applyRequest = new();
+
+    private HubConnection? _hubConnection;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (!string.IsNullOrEmpty(UrlTag) && _selectedTag != UrlTag)
+        {
+            _selectedTag = UrlTag;
+            await LoadPollsAsync();
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!string.IsNullOrEmpty(UrlTag))
+        {
+            _selectedTag = UrlTag;
+        }
+        await LoadMetadataAsync();
+        await LoadPollsAsync();
+
+        try
+        {
+            _hubConnection = new HubConnectionBuilder()
+                .WithUrl(NavigationManager.ToAbsoluteUri("/hubs/poll"))
+                .WithAutomaticReconnect()
+                .Build();
+
+            _hubConnection.On<int>("PollUpdated", (pollId) =>
+            {
+                _ = InvokeAsync(async () =>
+                {
+                    await LoadPollsAsync(isLiveRefresh: true);
+                    StateHasChanged();
+                });
+            });
+
+            await _hubConnection.StartAsync();
+        }
+        catch
+        {
+            // Silent fallback if pre-rendering or offline
+        }
+    }
+
+    private async Task LoadMetadataAsync()
+    {
+        try
+        {
+            var catTask = PollApi.GetCategoriesAsync();
+            var tagTask = PollApi.GetPopularTagsAsync();
+            await Task.WhenAll(catTask, tagTask);
+
+            _categories = await catTask;
+            _popularTags = await tagTask;
+
+            _flattenedCategories.Clear();
+            void Traverse(IEnumerable<CategoryDto> items)
+            {
+                foreach (var item in items)
+                {
+                    _flattenedCategories.Add(item);
+                    if (item.Children.Count > 0)
+                    {
+                        Traverse(item.Children);
+                    }
+                }
+            }
+            Traverse(_categories);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Metadata load error: {ex.Message}");
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_hubConnection is not null)
+        {
+            await _hubConnection.DisposeAsync();
+        }
+    }
+
+    private Task LoadPollsAsync() => LoadPollsAsync(false);
+
+    private async Task LoadPollsAsync(bool isLiveRefresh)
+    {
+        if (!isLiveRefresh)
+        {
+            _isLoading = true;
+            // Lets the error banner offer a retry that re-runs this exact load.
+            ApiErrors.Retry = () => LoadPollsAsync(false);
+        }
+        try
+        {
+            _polls = await PollApi.GetPollsAsync(_searchText, _selectedStatus, _selectedSort, _selectedCategoryId, _selectedTag);
+        }
+        finally
+        {
+            if (!isLiveRefresh)
+            {
+                _isLoading = false;
+            }
+        }
+    }
+
+    private async Task HandleSearchKeyUp(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter")
+        {
+            await LoadPollsAsync();
+        }
+    }
+
+    private List<List<CategoryDto>> GetBoardGroups()
+    {
+        var groups = new List<List<CategoryDto>>();
+        foreach (var cat in _flattenedCategories)
+        {
+            if (cat.Depth == 0 || groups.Count == 0)
+            {
+                groups.Add(new List<CategoryDto> { cat });
+            }
+            else
+            {
+                groups[^1].Add(cat);
+            }
+        }
+        return groups;
+    }
+
+    private async Task OnCategorySelected(int? categoryId)
+    {
+        _selectedCategoryId = categoryId;
+        await LoadPollsAsync();
+    }
+
+    private async Task OnTagSelected(string? tag)
+    {
+        _selectedTag = tag;
+        await LoadPollsAsync();
+    }
+
+    private async Task OnStatusChanged(string status)
+    {
+        _selectedStatus = status;
+        await LoadPollsAsync();
+    }
+
+    private async Task OnSortChanged(string sort)
+    {
+        _selectedSort = sort;
+        await LoadPollsAsync();
+    }
+
+    private async Task SubmitCategoryApplicationAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_applyRequest.Name))
+        {
+            Snackbar.Add("Please enter a board name.", Severity.Warning);
+            return;
+        }
+
+        _isSubmittingApplication = true;
+        try
+        {
+            var res = await PollApi.SubmitCategoryRequestAsync(_applyRequest);
+            if (res.Success)
+            {
+                Snackbar.Add(res.Message, Severity.Success);
+                _showApplyModal = false;
+                _applyRequest = new();
+            }
+            else
+            {
+                Snackbar.Add(res.Message, Severity.Error);
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Submission failed: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isSubmittingApplication = false;
+        }
+    }
+}

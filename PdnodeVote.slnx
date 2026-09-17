@@ -1,0 +1,7 @@
+<Solution>
+  <Folder Name="/tests/">
+    <Project Path="tests/PdnodeVote.Tests/PdnodeVote.Tests.csproj" />
+  </Folder>
+  <Project Path="PdnodeVote.Client/PdnodeVote.Client.csproj" />
+  <Project Path="PdnodeVote.csproj" />
+</Solution>

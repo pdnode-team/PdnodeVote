@@ -1,0 +1,219 @@
+@page "/user/{Username}"
+@rendermode InteractiveAuto
+@inject IPollApiClient PollApi
+@inject NavigationManager NavigationManager
+@inject ISnackbar Snackbar
+
+<PageTitle>@(string.IsNullOrEmpty(Username) ? "User Profile" : $"{Username}'s Profile") - Pdnode Vote</PageTitle>
+
+<InteractiveMudProviders />
+
+<MudContainer MaxWidth="MaxWidth.Medium" Class="my-6">
+    <!-- Breadcrumbs -->
+    <div class="d-flex align-center gap-2 mb-4" style="font-size: 13px; color: #64748b;">
+        <a href="/" style="color: #94a3b8; text-decoration: none;">Home</a>
+        <span>/</span>
+        <span style="color: #cbd5e1;">Users</span>
+        <span>/</span>
+        <span style="color: #38bdf8; font-weight: 500;">@Username</span>
+    </div>
+
+    @if (_isLoading)
+    {
+        <div class="d-flex justify-center my-12">
+            <MudProgressCircular Color="Color.Primary" Indeterminate="true" Size="Size.Large" />
+        </div>
+    }
+    else if (_profile == null)
+    {
+        <MudAlert Severity="Severity.Warning" Variant="Variant.Filled" Class="rounded-lg">
+            User "@Username" not found or does not exist.
+        </MudAlert>
+        <div class="mt-4">
+            <MudButton Variant="Variant.Outlined" Color="Color.Primary" Href="/">Explore Polls</MudButton>
+        </div>
+    }
+    else
+    {
+        <!-- Profile Header Card -->
+        <div class="rounded-xl pa-5 pa-md-6 mb-6" style="background-color: #1e242d; border: 1px solid rgba(255, 255, 255, 0.08);">
+            <div class="d-flex flex-column flex-sm-row align-start align-sm-center justify-space-between gap-4">
+                <div class="d-flex align-center gap-4">
+                    <!-- Avatar circle -->
+                    <div style="width: 64px; height: 64px; border-radius: 50%; background: linear-gradient(135deg, #10b981 0%, #059669 100%); display: flex; align-items: center; justify-content: center; font-size: 24px; font-weight: 700; color: #ffffff; box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3); border: 2px solid rgba(255,255,255,0.1);">
+                        @((_profile.DisplayName.FirstOrDefault()).ToString().ToUpper())
+                    </div>
+
+                    <div>
+                        <div class="d-flex align-center flex-wrap gap-2">
+                            <h1 style="font-size: 22px; font-weight: 700; color: #f8fafc; margin: 0; letter-spacing: -0.025em;">
+                                @_profile.DisplayName
+                            </h1>
+
+                            @if (!string.IsNullOrEmpty(_profile.RoleBadge))
+                            {
+                                var badgeBg = _profile.RoleBadge == "Admin" ? "rgba(239, 68, 68, 0.15)" :
+                                              _profile.RoleBadge == "SuperModerator" ? "rgba(168, 85, 247, 0.15)" : "rgba(16, 185, 129, 0.15)";
+                                var badgeColor = _profile.RoleBadge == "Admin" ? "#ef4444" :
+                                                _profile.RoleBadge == "SuperModerator" ? "#c084fc" : "#10b981";
+                                <span style="font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 9999px; background: @badgeBg; color: @badgeColor; border: 1px solid rgba(255,255,255,0.08);">
+                                    @_profile.RoleBadge
+                                </span>
+                            }
+
+                            <UserLevelBadge Level="_profile.UserLevel" ShowShort="false" />
+                        </div>
+
+                        <div class="d-flex align-center gap-3 mt-1" style="font-size: 13px; color: #94a3b8;">
+                            <span>Joined @_profile.JoinedAt.ToString("MMMM yyyy")</span>
+                            <span>·</span>
+                            <span>@_profile.CreatedPollsCount polls created</span>
+                            <span>·</span>
+                            <span>@_profile.CommentsCount comments</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="d-flex align-center gap-3">
+                    <div class="text-center pa-2 px-3 rounded-lg" style="background: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,0.05);">
+                        <div style="font-size: 16px; font-weight: 700; color: #10b981;">@_profile.TotalVotesReceived</div>
+                        <div style="font-size: 11px; color: #64748b;">Votes Received</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Activity Tabs -->
+        <MudTabs Elevation="0" Rounded="true" ApplyEffectsToContainer="true" Color="Color.Transparent" Class="rounded-lg">
+            <!-- Tab 1: Created Polls -->
+            <MudTabPanel Text="@($"Polls Created ({_profile.CreatedPollsCount})")" Icon="@Icons.Material.Filled.Poll">
+                @if (_profile.RecentPolls.Count == 0)
+                {
+                    <div class="text-center py-12 rounded-xl mt-3" style="background-color: #1e242d; border: 1px solid rgba(255, 255, 255, 0.08);">
+                        <MudIcon Icon="@Icons.Material.Outlined.HowToVote" Style="font-size: 2.5rem; color: #64748b; margin-bottom: 8px;" />
+                        <MudText Typo="Typo.body1" Style="color: #94a3b8;">No public polls created yet.</MudText>
+                    </div>
+                }
+                else
+                {
+                    <div class="d-flex flex-column gap-3 mt-3">
+                        @foreach (var poll in _profile.RecentPolls)
+                        {
+                            <div class="pa-4 rounded-xl cursor-pointer"
+                                 style="background-color: #1e242d; border: 1px solid rgba(255, 255, 255, 0.08); transition: border-color 0.2s;"
+                                 onmouseover="this.style.borderColor='rgba(16, 185, 129, 0.4)'"
+                                 onmouseout="this.style.borderColor='rgba(255, 255, 255, 0.08)'"
+                                 @onclick="@(() => NavigationManager.NavigateTo($"/poll/{poll.Id}"))">
+                                <div class="d-flex align-center justify-space-between mb-2">
+                                    <div class="d-flex align-center gap-2">
+                                        @if (!string.IsNullOrEmpty(poll.CategoryName))
+                                        {
+                                            <span style="font-size: 11px; font-weight: 600; padding: 2px 7px; border-radius: 4px; background: rgba(56, 189, 248, 0.12); color: #38bdf8;">
+                                                @poll.CategoryName
+                                            </span>
+                                        }
+                                        <span style="font-size: 11px; color: #64748b;">
+                                            @poll.CreatedAt.ToLocalTime().ToString("MMM dd, yyyy")
+                                        </span>
+                                    </div>
+                                    <span style="font-size: 11px; color: #64748b;">
+                                        @(poll.IsExpired ? "Closed" : "Active")
+                                    </span>
+                                </div>
+
+                                <div style="font-size: 15px; font-weight: 600; color: #f8fafc; margin-bottom: 4px;">
+                                    @poll.Title
+                                </div>
+
+                                @if (!string.IsNullOrWhiteSpace(poll.Description))
+                                {
+                                    <div style="font-size: 13px; color: #94a3b8; line-height: 1.5; margin-bottom: 8px;">
+                                        @(poll.Description.Length > 120 ? poll.Description[..120] + "..." : poll.Description)
+                                    </div>
+                                }
+
+                                <div class="d-flex align-center gap-3 mt-2" style="font-size: 12px; color: #64748b;">
+                                    <span><strong>@poll.ParticipantCount</strong> votes</span>
+                                    <span>·</span>
+                                    <span><strong>@poll.OptionCount</strong> choices</span>
+                                    <span>·</span>
+                                    <span><strong>@poll.CommentCount</strong> comments</span>
+                                </div>
+                            </div>
+                        }
+                    </div>
+                }
+            </MudTabPanel>
+
+            <!-- Tab 2: Recent Comments -->
+            <MudTabPanel Text="@($"Comments ({_profile.CommentsCount})")" Icon="@Icons.Material.Filled.Forum">
+                @if (_profile.RecentComments.Count == 0)
+                {
+                    <div class="text-center py-12 rounded-xl mt-3" style="background-color: #1e242d; border: 1px solid rgba(255, 255, 255, 0.08);">
+                        <MudIcon Icon="@Icons.Material.Outlined.ChatBubbleOutline" Style="font-size: 2.5rem; color: #64748b; margin-bottom: 8px;" />
+                        <MudText Typo="Typo.body1" Style="color: #94a3b8;">No comments posted yet.</MudText>
+                    </div>
+                }
+                else
+                {
+                    <div class="d-flex flex-column gap-3 mt-3">
+                        @foreach (var c in _profile.RecentComments)
+                        {
+                            <div class="pa-4 rounded-xl cursor-pointer"
+                                 style="background-color: #1e242d; border: 1px solid rgba(255, 255, 255, 0.08);"
+                                 @onclick="@(() => NavigationManager.NavigateTo($"/poll/{c.PollId}"))">
+                                <div class="d-flex align-center justify-space-between mb-2">
+                                    <span style="font-size: 12px; color: #94a3b8;">
+                                        On poll: <strong style="color: #38bdf8;">@c.PollTitle</strong>
+                                    </span>
+                                    <span style="font-size: 11px; color: #64748b;">
+                                        @c.CreatedAt.ToLocalTime().ToString("MMM dd, yyyy HH:mm")
+                                    </span>
+                                </div>
+                                <div style="font-size: 13px; color: #cbd5e1; line-height: 1.5; white-space: pre-wrap;">
+                                    @c.Content
+                                </div>
+                            </div>
+                        }
+                    </div>
+                }
+            </MudTabPanel>
+        </MudTabs>
+    }
+</MudContainer>
+
+@code {
+    [Parameter]
+    public string Username { get; set; } = string.Empty;
+
+    private UserProfileDto? _profile;
+    private bool _isLoading = true;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        await LoadProfileAsync();
+    }
+
+    private async Task LoadProfileAsync()
+    {
+        if (string.IsNullOrWhiteSpace(Username))
+        {
+            _isLoading = false;
+            return;
+        }
+
+        try
+        {
+            _isLoading = true;
+            _profile = await PollApi.GetUserPublicProfileAsync(Username);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Failed to load user profile: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+}

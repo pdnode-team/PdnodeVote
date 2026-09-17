@@ -1,0 +1,739 @@
+/* DaisyUI Dark Theme & Modern Tech Typography (Inter / Geist inspired) */
+html, body {
+    font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    margin: 0;
+    padding: 0;
+    background-color: #161a1f !important;
+    color: #94a3b8 !important;
+    letter-spacing: -0.011em;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+h1, h2, h3, h4, h5, h6, .mud-typography-h4, .mud-typography-h5, .mud-typography-h6 {
+    letter-spacing: -0.025em !important;
+    font-weight: 600 !important;
+}
+
+a, .btn-link {
+    color: #34d399;
+    text-decoration: none;
+    transition: color 0.15s ease;
+}
+
+a:hover, .btn-link:hover {
+    color: #10b981;
+    text-decoration: none;
+}
+
+/* 按钮基础色：纯黑灰基底 + 翠绿/琥珀/珊瑚红点缀，无蓝色 */
+.btn-primary {
+    color: #ffffff;
+    background-color: #10b981;
+    border-color: #10b981;
+}
+
+.btn-primary:hover {
+    background-color: #059669;
+    border-color: #059669;
+}
+
+.btn:focus, .btn:active:focus, .btn-link.nav-link:focus, .form-control:focus, .form-check-input:focus {
+    box-shadow: 0 0 0 0.15rem rgba(16, 185, 129, 0.3);
+    border-color: #10b981;
+}
+
+/* 登录/注册/个人中心卡片（黑灰层次 #191e24 / #2a323c / #384252） */
+/* 登录/注册/个人中心卡片（现代科技极简黑灰层次 #161a1f / #1e242d / 半透边框） */
+.auth-wrapper {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 75vh;
+    padding: 2rem 1rem;
+}
+
+.auth-card {
+    background: #1e242d;
+    border-radius: 16px;
+    box-shadow: 0 16px 40px -12px rgba(0, 0, 0, 0.6);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    width: 100%;
+    max-width: 420px;
+    padding: 2.2rem 2rem;
+    color: #f8fafc;
+}
+
+.auth-header {
+    text-align: center;
+    margin-bottom: 2rem;
+}
+
+.auth-header h2 {
+    font-size: 1.5rem;
+    font-weight: 700;
+    letter-spacing: -0.025em;
+    color: #f8fafc;
+    margin-bottom: 0.35rem;
+}
+
+.auth-header p {
+    font-size: 0.875rem;
+    color: #94a3b8;
+    margin: 0;
+}
+
+.auth-btn-primary {
+    background: linear-gradient(135deg, #10b981, #059669);
+    border: none;
+    color: white;
+    font-weight: 600;
+    padding: 0.75rem 1rem;
+    border-radius: 9px;
+    width: 100%;
+    font-size: 0.95rem;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    box-shadow: 0 2px 8px rgba(16, 185, 129, 0.25);
+}
+
+.auth-btn-primary:hover {
+    background: linear-gradient(135deg, #059669, #047857);
+    color: white;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 14px rgba(16, 185, 129, 0.35);
+}
+
+.auth-btn-primary:active {
+    transform: translateY(0);
+}
+
+.auth-footer {
+    text-align: center;
+    margin-top: 1.5rem;
+    font-size: 0.875rem;
+    color: #94a3b8;
+}
+
+.auth-footer a {
+    color: #34d399;
+    font-weight: 600;
+}
+
+/* 表单输入控件深色化 & 彻底根除 Bootstrap 5 floating label 的白底 pseudo-element */
+:root, [data-bs-theme="dark"] {
+    --bs-body-bg: #1d232a !important;
+    --bs-body-color: #a6adbb !important;
+    --bs-card-bg: #2a323c !important;
+    --bs-tertiary-bg: #191e24 !important;
+    --bs-secondary-bg: #191e24 !important;
+    --bs-border-color: #384252 !important;
+}
+
+.form-floating > label,
+.form-floating > label::after,
+.form-floating > .form-control ~ label::after,
+.form-floating > .form-control:focus ~ label::after,
+.form-floating > .form-control:not(:placeholder-shown) ~ label::after,
+.form-floating > .form-control-plaintext ~ label::after,
+.form-floating > .form-select ~ label::after,
+.form-floating > .form-control:disabled ~ label::after {
+    background-color: transparent !important;
+    background: transparent !important;
+    color: #94a3b8 !important;
+}
+
+.form-floating > .form-control:focus ~ label,
+.form-floating > .form-control:not(:placeholder-shown) ~ label {
+    color: #10b981 !important;
+}
+
+.form-control {
+    background-color: #191e24 !important;
+    color: #f8fafc !important;
+    border-radius: 8px;
+    border: 1px solid #384252;
+}
+
+.form-control:focus {
+    background-color: #191e24 !important;
+    color: #f8fafc !important;
+    border-color: #10b981;
+    box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.2);
+}
+
+.form-control::placeholder {
+    color: #64748b;
+}
+
+.form-control:disabled {
+    background-color: #15191e !important;
+    color: #64748b !important;
+    border-color: #28303d !important;
+}
+
+.darker-border-checkbox.form-check-input, .form-check-input {
+    background-color: #191e24;
+    border-color: #4b5563;
+}
+
+.form-check-input:checked {
+    background-color: #10b981;
+    border-color: #10b981;
+}
+
+/* 个人中心卡片与导航深色化 */
+.profile-card {
+    background-color: #2a323c !important;
+    border: 1px solid #384252 !important;
+    color: #f8fafc !important;
+}
+
+.profile-nav-group {
+    background-color: #2a323c !important;
+    border: 1px solid #384252 !important;
+}
+
+.profile-nav-item {
+    background-color: #2a323c !important;
+    color: #a6adbb !important;
+    border-color: #384252 !important;
+    border-left: 4px solid transparent !important;
+    transition: all 0.2s ease-in-out;
+}
+
+.profile-nav-item .profile-nav-icon {
+    color: #10b981 !important;
+    transition: color 0.2s;
+}
+
+.profile-nav-item .profile-nav-logout-icon {
+    color: #ef4444 !important;
+}
+
+.profile-nav-item:hover {
+    background-color: #323c48 !important;
+    color: #f8fafc !important;
+}
+
+.profile-nav-item:hover .profile-nav-icon {
+    color: #34d399 !important;
+}
+
+/* 选中项 (Active): 采用深黑底色 #191e24 + 左侧翡翠绿条，高亮图标与白色文字永不重色消失 */
+.profile-nav-item.active {
+    background-color: #191e24 !important;
+    color: #ffffff !important;
+    border-left: 4px solid #10b981 !important;
+    border-color: #384252 #384252 #384252 #10b981 !important;
+    font-weight: 600;
+}
+
+.profile-nav-item.active .profile-nav-icon {
+    color: #10b981 !important;
+    filter: drop-shadow(0 0 6px rgba(16, 185, 129, 0.4));
+}
+
+/* 全局深色表格与提示框样式，彻底杜绝白底黑字漏出 */
+table, .table {
+    --bs-table-bg: transparent !important;
+    --bs-table-color: #f8fafc !important;
+    color: #f8fafc !important;
+    border-color: #384252 !important;
+}
+
+.table > :not(caption) > * > * {
+    background-color: transparent !important;
+    color: #f8fafc !important;
+    border-bottom-color: #384252 !important;
+}
+
+.alert-success {
+    background-color: rgba(16, 185, 129, 0.15) !important;
+    border: 1px solid #10b981 !important;
+    color: #6ee7b7 !important;
+}
+
+.alert-danger {
+    background-color: rgba(239, 68, 68, 0.15) !important;
+    border: 1px solid #ef4444 !important;
+    color: #fca5a5 !important;
+}
+
+.alert-warning {
+    background-color: rgba(245, 158, 11, 0.15) !important;
+    border: 1px solid #f59e0b !important;
+    color: #fde68a !important;
+}
+
+/* 输入框前缀/后缀 .input-group-text 彻底深色化，杜绝浅色白块 */
+.input-group-text {
+    background-color: #191e24 !important;
+    border-color: #384252 !important;
+    color: #10b981 !important;
+}
+
+/* 键盘按键与代码高亮 kbd 深色样式 */
+kbd {
+    background-color: #15191e !important;
+    color: #10b981 !important;
+    border: 1px solid #384252 !important;
+    padding: 0.2rem 0.5rem;
+    border-radius: 6px;
+    font-size: 0.9em;
+    letter-spacing: 0.05em;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+}
+
+/* 顶部用户胶囊下拉菜单 (100% 原生可靠，零 JS 依赖) */
+.user-dropdown {
+    position: relative;
+    display: inline-block;
+}
+
+.user-dropdown summary {
+    list-style: none;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    background-color: #2a323c;
+    color: #f8fafc;
+    border: 1px solid #384252;
+    border-radius: 9999px;
+    padding: 6px 14px;
+    font-size: 14px;
+    font-weight: 600;
+    transition: all 0.2s ease;
+    user-select: none;
+}
+
+.user-dropdown summary::-webkit-details-marker {
+    display: none;
+}
+
+.user-dropdown summary:hover {
+    background-color: #323b46;
+    border-color: #10b981;
+}
+
+.user-dropdown[open] summary {
+    background-color: #323b46;
+    border-color: #10b981;
+    box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.2);
+}
+
+.user-dropdown .user-dropdown-menu {
+    position: absolute;
+    right: 0;
+    top: calc(100% + 8px);
+    background-color: #191e24;
+    border: 1px solid #384252;
+    border-radius: 12px;
+    box-shadow: 0 12px 30px rgba(0, 0, 0, 0.6);
+    min-width: 230px;
+    z-index: 1050;
+    overflow: hidden;
+}
+
+.user-dropdown-header {
+    padding: 12px 16px;
+    background-color: #15191e;
+    border-bottom: 1px solid #2a323c;
+}
+
+.logout-form {
+    margin: 0;
+}
+
+button.user-dropdown-item {
+    width: 100%;
+    background: none;
+    border: none;
+    cursor: pointer;
+    text-align: left;
+    font-family: inherit;
+}
+
+.user-dropdown-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 16px;
+    color: #cbd5e1;
+    text-decoration: none;
+    font-size: 14px;
+    font-weight: 500;
+    transition: background-color 0.15s;
+}
+
+.user-dropdown-item:hover {
+    background-color: #2a323c;
+    color: #f8fafc;
+    text-decoration: none;
+}
+
+.user-dropdown-item.danger {
+    color: #f87171;
+}
+
+.user-dropdown-item.danger:hover {
+    background-color: rgba(239, 68, 68, 0.15);
+    color: #ef4444;
+}
+
+.user-dropdown-divider {
+    height: 1px;
+    background-color: #2a323c;
+    margin: 4px 0;
+}
+
+/* ==========================================================================
+   Modern Polished Feed & Poll Card Styles (De-AI / Linear / Reddit inspired)
+   ========================================================================== */
+
+/* Modern Card: subtle border, micro-gradient, soft depth hover */
+.poll-feed-card {
+    background: #1e242d;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 14px;
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    cursor: pointer;
+    transition: all 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+    position: relative;
+    overflow: hidden;
+}
+
+.poll-feed-card:hover {
+    border-color: rgba(16, 185, 129, 0.4);
+    transform: translateY(-2px);
+    box-shadow: 0 10px 28px -10px rgba(0, 0, 0, 0.5), 0 0 16px -4px rgba(16, 185, 129, 0.12);
+}
+
+.poll-feed-card:active {
+    transform: translateY(0);
+}
+
+/* Metadata header line: compact, informative, calm */
+.poll-card-meta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    color: #94a3b8;
+    margin-bottom: 10px;
+    font-weight: 500;
+}
+
+.poll-card-meta .meta-dot {
+    width: 3px;
+    height: 3px;
+    border-radius: 50%;
+    background-color: #475569;
+}
+
+/* Status indicator badge */
+.status-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 9999px;
+    letter-spacing: 0.02em;
+}
+
+.status-pill.active {
+    background-color: rgba(16, 185, 129, 0.14);
+    color: #34d399;
+    border: 1px solid rgba(16, 185, 129, 0.25);
+}
+
+.status-pill.expired {
+    background-color: rgba(148, 163, 184, 0.12);
+    color: #94a3b8;
+    border: 1px solid rgba(148, 163, 184, 0.2);
+}
+
+.status-pill.pinned {
+    background-color: rgba(56, 189, 248, 0.12);
+    color: #38bdf8;
+    border: 1px solid rgba(56, 189, 248, 0.25);
+}
+
+/* Card title & description */
+.poll-card-title {
+    font-size: 17px;
+    font-weight: 600;
+    line-height: 1.4;
+    color: #f8fafc;
+    letter-spacing: -0.02em;
+    margin-bottom: 8px;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+.poll-card-desc {
+    font-size: 13px;
+    line-height: 1.55;
+    color: #94a3b8;
+    margin-bottom: 16px;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    flex-grow: 1;
+}
+
+/* Card Footer: clean metrics */
+.poll-card-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding-top: 14px;
+    margin-top: auto;
+    border-top: 1px solid rgba(255, 255, 255, 0.06);
+    font-size: 12px;
+    color: #64748b;
+}
+
+.poll-metrics {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    color: #94a3b8;
+    font-weight: 500;
+}
+
+.poll-metrics span {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.poll-card-arrow {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    color: #34d399;
+    font-weight: 500;
+    transition: transform 0.18s ease;
+}
+
+.poll-feed-card:hover .poll-card-arrow {
+    transform: translateX(3px);
+}
+
+/* Homepage board tree — same hierarchy language as Create Poll (bold parent, ↳ child) */
+.board-nav-groups {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 28px;
+    align-items: flex-start;
+    margin-top: 6px;
+}
+
+.board-nav-group {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    min-width: 168px;
+}
+
+.board-nav-item.board-nav-all {
+    width: auto;
+    display: inline-flex;
+    margin-bottom: 2px;
+}
+
+.board-nav-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    width: 100%;
+    background: transparent;
+    border: 1px solid transparent;
+    color: #cbd5e1;
+    text-align: left;
+    padding: 6px 10px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 13px;
+    font-family: inherit;
+    line-height: 1.35;
+    transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+.board-nav-item.is-parent .board-nav-name {
+    font-weight: 700;
+    color: #f8fafc;
+    letter-spacing: -0.02em;
+}
+
+.board-nav-item.is-child {
+    color: #94a3b8;
+    font-weight: 400;
+}
+
+.board-nav-item:hover {
+    background: rgba(255, 255, 255, 0.04);
+    color: #f8fafc;
+}
+
+.board-nav-item:hover .board-nav-name {
+    color: #f8fafc;
+}
+
+.board-nav-item.selected {
+    background: rgba(16, 185, 129, 0.14);
+    color: #34d399;
+    border-color: rgba(16, 185, 129, 0.25);
+}
+
+.board-nav-item.selected .board-nav-name,
+.board-nav-item.selected.is-parent .board-nav-name {
+    color: #34d399;
+}
+
+.board-nav-label {
+    display: inline-flex;
+    align-items: baseline;
+    min-width: 0;
+}
+
+.board-nav-branch {
+    opacity: 0.6;
+    white-space: pre;
+}
+
+.board-nav-count {
+    font-size: 11px;
+    font-weight: 500;
+    opacity: 0.7;
+    flex-shrink: 0;
+}
+
+/* Filter bar container: glassmorphism pill bar */
+.feed-filter-bar {
+    background-color: #1a2027;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 12px;
+    padding: 12px 18px;
+}
+
+/* Modern Vote Option Card in PollDetail */
+.vote-option-row {
+    background-color: #1a2027;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 10px;
+    padding: 14px 18px;
+    margin-bottom: 10px;
+    cursor: pointer;
+    transition: all 0.18s ease;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.vote-option-row:hover {
+    background-color: #212832;
+    border-color: rgba(16, 185, 129, 0.35);
+}
+
+.vote-option-row.selected {
+    background-color: rgba(16, 185, 129, 0.08);
+    border-color: #10b981;
+    box-shadow: 0 0 0 1px #10b981;
+}
+
+/* Sleek Result Bar */
+.result-option-box {
+    position: relative;
+    background-color: #1a2027;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 10px;
+    padding: 14px 18px;
+    margin-bottom: 12px;
+    overflow: hidden;
+}
+
+.result-option-box.user-voted {
+    border-color: rgba(16, 185, 129, 0.5);
+    background-color: rgba(16, 185, 129, 0.04);
+}
+
+.result-progress-fill {
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    background: linear-gradient(90deg, rgba(16, 185, 129, 0.18), rgba(16, 185, 129, 0.28));
+    transition: width 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+    z-index: 1;
+    border-radius: 9px 0 0 9px;
+}
+
+.result-content-wrap {
+    position: relative;
+    z-index: 2;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+/* Global Blazor Error UI Toast (Dark Minimalist Theme) */
+#blazor-error-ui {
+    color-scheme: dark !important;
+    background: rgba(22, 26, 31, 0.96) !important;
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border-top: 1px solid rgba(239, 68, 68, 0.45) !important;
+    box-shadow: 0 -8px 30px rgba(0, 0, 0, 0.6) !important;
+    color: #f8fafc !important;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+    font-size: 14px !important;
+    padding: 12px 24px !important;
+    z-index: 99999 !important;
+    display: none;
+    align-items: center;
+    justify-content: space-between;
+}
+
+#blazor-error-ui .reload {
+    display: inline-flex;
+    align-items: center;
+    padding: 4px 14px;
+    border-radius: 6px;
+    background-color: #10b981 !important;
+    color: #ffffff !important;
+    text-decoration: none !important;
+    font-weight: 600;
+    font-size: 13px;
+    margin-left: 12px;
+}
+
+#blazor-error-ui .reload:hover {
+    background-color: #059669 !important;
+}
+
+#blazor-error-ui .dismiss {
+    cursor: pointer;
+    color: #94a3b8 !important;
+    font-size: 18px;
+    padding: 4px 8px;
+    border-radius: 4px;
+}
+
+#blazor-error-ui .dismiss:hover {
+    color: #f8fafc !important;
+    background-color: rgba(255, 255, 255, 0.08);
+}

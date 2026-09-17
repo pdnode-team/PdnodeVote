@@ -1,0 +1,130 @@
+@page "/Account/Manage"
+
+@using System.ComponentModel.DataAnnotations
+@using Microsoft.AspNetCore.Identity
+@using PdnodeVote.Data
+
+@inject UserManager<ApplicationUser> UserManager
+@inject SignInManager<ApplicationUser> SignInManager
+@inject IdentityRedirectManager RedirectManager
+
+<PageTitle>Profile - Pdnode Vote</PageTitle>
+
+<h4 class="mb-3 fw-bold" style="color: #f8fafc;">Profile Settings</h4>
+<StatusMessage />
+
+@if (isPermanentlyBanned)
+{
+    <div class="alert alert-danger" role="alert">
+        <strong>Account Permanently Suspended:</strong> You cannot update your profile information. Reason: @(banReason ?? "Community rules violation").
+    </div>
+}
+else if (isCurrentlyBanned)
+{
+    <div class="alert alert-warning" role="alert">
+        <strong>Account Temporarily Suspended:</strong> Username changes and account deletion are locked during the suspension period. You may still manage your security credentials.
+    </div>
+}
+
+<div class="row">
+    <div class="col-lg-8">
+        <EditForm Model="Input" FormName="profile" OnValidSubmit="OnValidSubmitAsync" method="post">
+            <DataAnnotationsValidator />
+            <ValidationSummary class="text-danger small mb-3" role="alert" />
+
+            <div class="form-floating mb-3">
+                <InputText @bind-Value="Input.NewUserName" id="Input.NewUserName" class="form-control" placeholder="Enter username" disabled="@isCurrentlyBanned" />
+                <label for="Input.NewUserName">Username</label>
+                @if (isCurrentlyBanned)
+                {
+                    <div class="text-warning small mt-1">Username modification is locked while your account is suspended.</div>
+                }
+                <ValidationMessage For="() => Input.NewUserName" class="text-danger small mt-1" />
+            </div>
+
+            <div class="mt-4">
+                <button type="submit" class="auth-btn-primary" disabled="@isPermanentlyBanned">
+                    Save Changes
+                </button>
+            </div>
+        </EditForm>
+    </div>
+</div>
+
+@code {
+    private ApplicationUser? user;
+    private string? username;
+    private bool isCurrentlyBanned;
+    private bool isPermanentlyBanned;
+    private string? banReason;
+
+    [CascadingParameter]
+    private HttpContext HttpContext { get; set; } = default!;
+
+    [SupplyParameterFromForm]
+    private InputModel Input { get; set; } = default!;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Input ??= new();
+
+        user = await UserManager.GetUserAsync(HttpContext.User);
+        if (user is null)
+        {
+            RedirectManager.RedirectToInvalidUser(UserManager, HttpContext);
+            return;
+        }
+
+        isCurrentlyBanned = user.IsCurrentlyBanned;
+        isPermanentlyBanned = user.IsPermanentlyBanned;
+        banReason = user.BanReason;
+
+        username = await UserManager.GetUserNameAsync(user);
+
+        Input.NewUserName ??= username;
+    }
+
+    private async Task OnValidSubmitAsync()
+    {
+        if (user is null)
+        {
+            RedirectManager.RedirectToInvalidUser(UserManager, HttpContext);
+            return;
+        }
+
+        if (user.IsPermanentlyBanned)
+        {
+            RedirectManager.RedirectToCurrentPageWithStatus("Error: Your account is permanently suspended. Profile modifications are not permitted.", HttpContext);
+            return;
+        }
+
+        // Change username (prevented if currently banned)
+        if (!user.IsCurrentlyBanned && !string.IsNullOrWhiteSpace(Input.NewUserName) && Input.NewUserName != username)
+        {
+            var existingUser = await UserManager.FindByNameAsync(Input.NewUserName.Trim());
+            if (existingUser != null && existingUser.Id != user.Id)
+            {
+                RedirectManager.RedirectToCurrentPageWithStatus("Error: This username is already taken. Please choose another.", HttpContext);
+                return;
+            }
+
+            var setUserNameResult = await UserManager.SetUserNameAsync(user, Input.NewUserName.Trim());
+            if (!setUserNameResult.Succeeded)
+            {
+                RedirectManager.RedirectToCurrentPageWithStatus("Error: Failed to change username: " + string.Join(", ", setUserNameResult.Errors.Select(e => e.Description)), HttpContext);
+                return;
+            }
+        }
+
+        await SignInManager.RefreshSignInAsync(user);
+        RedirectManager.RedirectToCurrentPageWithStatus("Your profile has been updated.", HttpContext);
+    }
+
+    private sealed class InputModel
+    {
+        [Required(ErrorMessage = "Username cannot be empty")]
+        [StringLength(50, MinimumLength = 2, ErrorMessage = "Username must be between 2 and 50 characters")]
+        [Display(Name = "Username")]
+        public string? NewUserName { get; set; }
+    }
+}

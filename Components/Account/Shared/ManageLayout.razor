@@ -1,0 +1,24 @@
+@inherits LayoutComponentBase
+@layout PdnodeVote.Components.Layout.MainLayout
+
+<div class="container my-4" style="max-width: 1040px;">
+    <div class="mb-5">
+        <h2 style="font-size: 24px; font-weight: 700; color: #f8fafc; letter-spacing: -0.025em; margin-bottom: 4px;">
+            Account Settings
+        </h2>
+        <div style="font-size: 14px; color: #94a3b8;">
+            Manage your personal profile, authentication methods, and security preferences
+        </div>
+    </div>
+
+    <div class="row g-4">
+        <div class="col-md-3">
+            <ManageNavMenu />
+        </div>
+        <div class="col-md-9">
+            <div class="p-4 p-md-5 rounded-3" style="background-color: #1e242d; border: 1px solid rgba(255, 255, 255, 0.08); color: #f8fafc; min-height: 420px; box-shadow: 0 10px 30px -10px rgba(0,0,0,0.5);">
+                @Body
+            </div>
+        </div>
+    </div>
+</div>

@@ -1,0 +1,116 @@
+@page "/Account/LoginWith2fa"
+
+@using System.ComponentModel.DataAnnotations
+@using Microsoft.AspNetCore.Identity
+@using PdnodeVote.Data
+
+@inject SignInManager<ApplicationUser> SignInManager
+@inject UserManager<ApplicationUser> UserManager
+@inject IdentityRedirectManager RedirectManager
+@inject ILogger<LoginWith2fa> Logger
+
+<PageTitle>Two-Factor Authentication - Pdnode Vote</PageTitle>
+
+<div class="auth-wrapper">
+    <div class="auth-card">
+        <div class="auth-header">
+            <div class="mb-2" style="font-size: 2.5rem; color: #10b981;">
+                <i class="bi bi-shield-lock-fill"></i>
+            </div>
+            <h2>Two-Factor Authentication</h2>
+            <p>Please enter the 6-digit code provided by your authenticator app</p>
+        </div>
+
+        <StatusMessage Message="@message" />
+
+        <EditForm Model="Input" FormName="login-with-2fa" OnValidSubmit="OnValidSubmitAsync" method="post">
+            <input type="hidden" name="ReturnUrl" value="@ReturnUrl" />
+            <input type="hidden" name="RememberMe" value="@RememberMe" />
+            <DataAnnotationsValidator />
+            <ValidationSummary class="text-danger small mb-3" role="alert" />
+
+            <div class="form-floating mb-3">
+                <InputText @bind-Value="Input.TwoFactorCode" id="Input.TwoFactorCode" class="form-control font-monospace" autocomplete="one-time-code" placeholder="123456" autofocus maxlength="7" style="font-size: 1.3rem; letter-spacing: 0.25em; text-align: center;" />
+                <label for="Input.TwoFactorCode" class="form-label">Authenticator Code</label>
+                <ValidationMessage For="() => Input.TwoFactorCode" class="text-danger small mt-1" />
+            </div>
+
+            <div class="form-check mb-3 d-flex align-items-center">
+                <InputCheckbox @bind-Value="Input.RememberMachine" id="remember-machine" class="form-check-input me-2" />
+                <label for="remember-machine" class="form-check-label text-secondary small" style="user-select: none;">
+                    Remember this machine
+                </label>
+            </div>
+
+            <div>
+                <button type="submit" class="auth-btn-primary mb-3">
+                    Verify and Log In
+                </button>
+            </div>
+        </EditForm>
+
+        <div class="auth-footer">
+            <span class="text-secondary small">Don't have access to your authenticator?</span>
+            <a href="Account/LoginWithRecoveryCode?ReturnUrl=@ReturnUrl" class="small fw-semibold ms-1">
+                Log in with recovery code
+            </a>
+        </div>
+    </div>
+</div>
+
+@code {
+    private string? message;
+    private ApplicationUser user = default!;
+
+    [SupplyParameterFromForm]
+    private InputModel Input { get; set; } = default!;
+
+    [SupplyParameterFromQuery]
+    private string? ReturnUrl { get; set; }
+
+    [SupplyParameterFromQuery]
+    private bool RememberMe { get; set; }
+
+    protected override async Task OnInitializedAsync()
+    {
+        Input ??= new();
+
+        user = await SignInManager.GetTwoFactorAuthenticationUserAsync() ??
+            throw new InvalidOperationException("Unable to load two-factor authentication user.");
+    }
+
+    private async Task OnValidSubmitAsync()
+    {
+        var authenticatorCode = Input.TwoFactorCode!.Replace(" ", string.Empty).Replace("-", string.Empty);
+        var result = await SignInManager.TwoFactorAuthenticatorSignInAsync(authenticatorCode, RememberMe, Input.RememberMachine);
+        var userId = await UserManager.GetUserIdAsync(user);
+
+        if (result.Succeeded)
+        {
+            Logger.LogInformation("User with ID '{UserId}' logged in with 2fa.", userId);
+            RedirectManager.RedirectTo(ReturnUrl);
+        }
+        else if (result.IsLockedOut)
+        {
+            Logger.LogWarning("User with ID '{UserId}' account locked out.", userId);
+            RedirectManager.RedirectTo("Account/Lockout");
+        }
+        else
+        {
+            Logger.LogWarning("Invalid authenticator code entered for user with ID '{UserId}'.", userId);
+            message = "Error: Invalid verification code entered. Please verify and try again.";
+        }
+    }
+
+    private sealed class InputModel
+    {
+        [Required(ErrorMessage = "Please enter the 6-digit authenticator code")]
+        [StringLength(7, ErrorMessage = "The code must be at least {2} and at max {1} characters long.", MinimumLength = 6)]
+        [DataType(DataType.Text)]
+        [Display(Name = "Authenticator Code")]
+        public string? TwoFactorCode { get; set; }
+
+        [Display(Name = "Remember this machine")]
+        public bool RememberMachine { get; set; }
+    }
+}
